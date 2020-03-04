@@ -37,6 +37,8 @@ int main(int argc,char** argv)
 
 	// env->Initialize();
 
+	pybind11::scoped_interpreter guard{};
+
 	glutInit(&argc, argv);
 
 	MASS::Window* window;

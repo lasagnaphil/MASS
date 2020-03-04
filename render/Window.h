@@ -40,8 +40,6 @@ private:
 	Eigen::VectorXd GetActivationFromNN(const Eigen::VectorXd& mt);
 
 	pybind11::object mm,mns,sys_module,nn_module,muscle_nn_module;
-    pybind11::scoped_interpreter guard;
-
 
     Environment* mEnv;
 	bool mFocus;
