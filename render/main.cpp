@@ -4,8 +4,9 @@
 #include "Character.h"
 #include "BVH.h"
 #include "Muscle.h"
-namespace p = boost::python;
-namespace np = boost::python::numpy;
+
+#include <pybind11/embed.h>
+
 int main(int argc,char** argv)
 {
 	MASS::Environment* env = new MASS::Environment();
@@ -36,8 +37,6 @@ int main(int argc,char** argv)
 
 	// env->Initialize();
 
-	Py_Initialize();
-	np::initialize();
 	glutInit(&argc, argv);
 
 	MASS::Window* window;

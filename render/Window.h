@@ -2,11 +2,9 @@
 #define __MASS_WINDOW_H__
 #include "dart/dart.hpp"
 #include "dart/gui/gui.hpp"
-#include <boost/python.hpp>
-#include <boost/python/numpy.hpp>
 
-namespace p = boost::python;
-namespace np = boost::python::numpy;
+#include <pybind11/embed.h>
+#include <pybind11/pytypes.h>
 
 namespace MASS
 {
@@ -41,10 +39,11 @@ private:
 	Eigen::VectorXd GetActionFromNN();
 	Eigen::VectorXd GetActivationFromNN(const Eigen::VectorXd& mt);
 
-	p::object mm,mns,sys_module,nn_module,muscle_nn_module;
+	pybind11::object mm,mns,sys_module,nn_module,muscle_nn_module;
+    pybind11::scoped_interpreter guard;
 
 
-	Environment* mEnv;
+    Environment* mEnv;
 	bool mFocus;
 	bool mSimulating;
 	bool mDrawOBJ;
