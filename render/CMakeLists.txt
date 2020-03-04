@@ -9,7 +9,7 @@ find_package(OpenGL REQUIRED)
 find_package(GLUT REQUIRED)
 
 find_package(PythonLibs REQUIRED)
-find_package(Boost 1.66.0 COMPONENTS filesystem python3 numpy3)
+find_package(Boost 1.72.0 COMPONENTS filesystem python3 numpy3)
 
 include_directories(${DART_INCLUDE_DIRS})
 include_directories(${OPENGL_INCLUDE_DIR})

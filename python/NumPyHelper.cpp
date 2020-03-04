@@ -1,180 +1,162 @@
 #include "NumPyHelper.h"
 
-np::ndarray toNumPyArray(const std::vector<float>& val)
+py::array_t<float> toNumPyArray(const std::vector<float>& val)
 {
-	int n = val.size();
-	p::tuple shape = p::make_tuple(n);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
-
-	float* dest = reinterpret_cast<float*>(array.get_data());
+    size_t n = val.size();
+    py::array_t<float> array(n);
+    py::buffer_info buf = array.request();
 	for(int i=0;i<n;i++)
 	{
-		dest[i] = val[i];
+        ((float*)buf.ptr)[i] = val[i];
+	}
+	return array;
+}
+py::array_t<float> toNumPyArray(const std::vector<double>& val)
+{
+    size_t n = val.size();
+    py::array_t<float> array(n);
+    py::buffer_info buf = array.request();
+
+	for(int i=0;i<n;i++)
+	{
+        ((float*)buf.ptr)[i] = val[i];
 	}
 
 	return array;
 }
-np::ndarray toNumPyArray(const std::vector<double>& val)
+py::array_t<float> toNumPyArray(const std::vector<Eigen::VectorXd>& val)
 {
 	int n = val.size();
-	p::tuple shape = p::make_tuple(n);
-	np::dtype dtype = np::dtype::get_builtin<double>();
-	np::ndarray array = np::empty(shape,dtype);
-
-	double* dest = reinterpret_cast<double*>(array.get_data());
-	for(int i=0;i<n;i++)
-	{
-		dest[i] = val[i];
-	}
-
-	return array;
-}
-np::ndarray toNumPyArray(const std::vector<Eigen::VectorXd>& val)
-{
-	int n =val.size();
 	int m = val[0].rows();
-	p::tuple shape = p::make_tuple(n,m);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
+	py::array_t<float> array({n, m});
+    py::buffer_info buf = array.request();
 
-	float* dest = reinterpret_cast<float*>(array.get_data());
 	int index = 0;
 	for(int i=0;i<n;i++)
 	{
 		for(int j=0;j<m;j++)
 		{
-			dest[index++] = val[i][j];
+            ((float*)buf.ptr)[index++] = val[i][j];
 		}
 	}
 
 	return array;	
 }
-np::ndarray toNumPyArray(const std::vector<Eigen::MatrixXd>& val)
+py::array_t<float> toNumPyArray(const std::vector<Eigen::MatrixXd>& val)
 {
 	int n = val.size();
 	int m = val[0].rows();
 	int l = val[0].cols();
 
-	p::tuple shape = p::make_tuple(n,m,l);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
+    py::array_t<float> array({n, m, l});
+    py::buffer_info buf = array.request();
 
-	float* dest = reinterpret_cast<float*>(array.get_data());
 	int index = 0;
 	for(int i=0;i<n;i++)
 		for(int j=0;j<m;j++)
 			for(int k=0;k<l;k++)
-				dest[index++] = val[i](j,k);
+                ((float*)buf.ptr)[index++] = val[i](j,k);
 
 	return array;
 }
-np::ndarray toNumPyArray(const std::vector<std::vector<float>>& val)
-{
-	int n =val.size();
-	int m = val[0].size();
-	p::tuple shape = p::make_tuple(n,m);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
-
-	float* dest = reinterpret_cast<float*>(array.get_data());
-	int index = 0;
-	for(int i=0;i<n;i++)
-	{
-		for(int j=0;j<m;j++)
-		{
-			dest[index++] = val[i][j];
-		}
-	}
-
-	return array;
-}
-np::ndarray toNumPyArray(const std::vector<std::vector<double>>& val)
-{
-	int n =val.size();
-	int m = val[0].size();
-	p::tuple shape = p::make_tuple(n,m);
-	np::dtype dtype = np::dtype::get_builtin<double>();
-	np::ndarray array = np::empty(shape,dtype);
-
-	double* dest = reinterpret_cast<double*>(array.get_data());
-	int index = 0;
-	for(int i=0;i<n;i++)
-	{
-		for(int j=0;j<m;j++)
-		{
-			dest[index++] = val[i][j];
-		}
-	}
-
-	return array;
-}
-//always return 1-dim array
-np::ndarray toNumPyArray(const std::vector<bool>& val)
+py::array_t<float> toNumPyArray(const std::vector<std::vector<float>>& val)
 {
 	int n = val.size();
-	p::tuple shape = p::make_tuple(n);
-	np::dtype dtype = np::dtype::get_builtin<bool>();
-	np::ndarray array = np::empty(shape,dtype);
+	int m = val[0].size();
 
-	bool* dest = reinterpret_cast<bool*>(array.get_data());
+    py::array_t<float> array({n, m});
+    py::buffer_info buf = array.request();
+
+	int index = 0;
 	for(int i=0;i<n;i++)
 	{
-		dest[i] = val[i];
+		for(int j=0;j<m;j++)
+		{
+            ((float*)buf.ptr)[index++] = val[i][j];
+		}
+	}
+
+	return array;
+}
+py::array_t<float> toNumPyArray(const std::vector<std::vector<double>>& val)
+{
+	int n = val.size();
+	int m = val[0].size();
+
+    py::array_t<float> array({n, m});
+    py::buffer_info buf = array.request();
+
+	int index = 0;
+	for(int i=0;i<n;i++)
+	{
+		for(int j=0;j<m;j++)
+		{
+            ((float*)buf.ptr)[index++] = val[i][j];
+		}
+	}
+
+	return array;
+}
+//always return 1-dim array
+py::array_t<float> toNumPyArray(const std::vector<bool>& val)
+{
+	int n = val.size();
+
+    py::array_t<float> array(n);
+    py::buffer_info buf = array.request();
+
+	for(int i=0;i<n;i++)
+	{
+        ((float*)buf.ptr)[i] = val[i];
 	}
 
 	return array;
 }
 
 //always return 1-dim array
-np::ndarray toNumPyArray(const Eigen::VectorXd& vec)
+py::array_t<float> toNumPyArray(const Eigen::VectorXd& vec)
 {
 	int n = vec.rows();
-	p::tuple shape = p::make_tuple(n);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
 
-	float* dest = reinterpret_cast<float*>(array.get_data());
+    py::array_t<float> array(n);
+    py::buffer_info buf = array.request();
+
 	for(int i =0;i<n;i++)
 	{
-		dest[i] = vec[i];
+        ((float*)buf.ptr)[i] = vec[i];
 	}
 
 	return array;
 }
 //always return 2-dim array
-np::ndarray toNumPyArray(const Eigen::MatrixXd& matrix)
+py::array_t<float> toNumPyArray(const Eigen::MatrixXd& matrix)
 {
 	int n = matrix.rows();
 	int m = matrix.cols();
 
-	p::tuple shape = p::make_tuple(n,m);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
+    py::array_t<float> array({n, m});
+    py::buffer_info buf = array.request();
 
-	float* dest = reinterpret_cast<float*>(array.get_data());
 	int index = 0;
 	for(int i=0;i<n;i++)
 	{
 		for(int j=0;j<m;j++)
 		{
-			dest[index++] = matrix(i,j);
+            ((float*)buf.ptr)[index++] = matrix(i,j);
 		}
 	}
 
 	return array;
 }
 //always return 2-dim array
-np::ndarray toNumPyArray(const Eigen::Isometry3d& T)
+py::array_t<float> toNumPyArray(const Eigen::Isometry3d& T)
 {
 	int n = 4;
 	int m = 4;
 
-	p::tuple shape = p::make_tuple(n,m);
-	np::dtype dtype = np::dtype::get_builtin<float>();
-	np::ndarray array = np::empty(shape,dtype);
-
-	float* dest = reinterpret_cast<float*>(array.get_data());
+    py::array_t<float> array({n, m});
+    py::buffer_info buf = array.request();
+	float* dest = reinterpret_cast<float*>(buf.ptr);
 	int index = 0;
 	Eigen::Matrix3d R = T.linear();
 	Eigen::Vector3d p = T.translation();
@@ -185,11 +167,12 @@ np::ndarray toNumPyArray(const Eigen::Isometry3d& T)
 
 	return array;
 }
-Eigen::VectorXd toEigenVector(const np::ndarray& array)
+Eigen::VectorXd toEigenVector(const py::array_t<float>& array)
 {
 	Eigen::VectorXd vec(array.shape(0));
 
-	float* srcs = reinterpret_cast<float*>(array.get_data());
+    py::buffer_info buf = array.request();
+	float* srcs = reinterpret_cast<float*>(buf.ptr);
 
 	for(int i=0;i<array.shape(0);i++)
 	{
@@ -197,12 +180,13 @@ Eigen::VectorXd toEigenVector(const np::ndarray& array)
 	}
 	return vec;
 }
-std::vector<Eigen::VectorXd> toEigenVectorVector(const np::ndarray& array)
+std::vector<Eigen::VectorXd> toEigenVectorVector(const py::array_t<float>& array)
 {
 	std::vector<Eigen::VectorXd> mat;
 	mat.resize(array.shape(0));
-	
-	float* srcs = reinterpret_cast<float*>(array.get_data());
+
+    py::buffer_info buf = array.request();
+	float* srcs = reinterpret_cast<float*>(buf.ptr);
 	int index = 0;
 	
 	for(int i=0;i<array.shape(0);i++){
@@ -213,11 +197,12 @@ std::vector<Eigen::VectorXd> toEigenVectorVector(const np::ndarray& array)
 
 	return mat;	
 }
-Eigen::MatrixXd toEigenMatrix(const np::ndarray& array)
+Eigen::MatrixXd toEigenMatrix(const py::array_t<float>& array)
 {
 	Eigen::MatrixXd mat(array.shape(0),array.shape(1));
 
-	float* srcs = reinterpret_cast<float*>(array.get_data());
+    py::buffer_info buf = array.request();
+	float* srcs = reinterpret_cast<float*>(buf.ptr);
 
 	int index = 0;
 	for(int i=0;i<array.shape(0);i++)
@@ -229,10 +214,10 @@ Eigen::MatrixXd toEigenMatrix(const np::ndarray& array)
 	}
 	return mat;
 }
-std::vector<bool> toStdVector(const p::list& list)
+std::vector<bool> toStdVector(const py::list& list)
 {
-	std::vector<bool> vec(boost::python::len(list));
+	std::vector<bool> vec(py::len(list));
 	for(int i =0;i<vec.size();i++)
-		vec[i] = boost::python::extract<bool>(list[i]);
+	    vec[i] = list[i].cast<bool>();
 	return vec;
 }

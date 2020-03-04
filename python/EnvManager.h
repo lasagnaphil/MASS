@@ -1,9 +1,12 @@
 #ifndef __ENV_MANAGER_H__
 #define __ENV_MANAGER_H__
 #include "Environment.h"
-#include <boost/python.hpp>
-#include <boost/python/numpy.hpp>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 #include "NumPyHelper.h"
+
+namespace py = pybind11;
+
 class EnvManager
 {
 public:
@@ -19,26 +22,26 @@ public:
 	void Step(int id);
 	void Reset(bool RSI,int id);
 	bool IsEndOfEpisode(int id);
-	np::ndarray GetState(int id);
-	void SetAction(np::ndarray np_array, int id);
+	py::array_t<float> GetState(int id);
+	void SetAction(py::array_t<float> np_array, int id);
 	double GetReward(int id);
 
 	void Steps(int num);
 	void StepsAtOnce();
 	void Resets(bool RSI);
-	np::ndarray IsEndOfEpisodes();
-	np::ndarray GetStates();
-	void SetActions(np::ndarray np_array);
-	np::ndarray GetRewards();
+	py::array_t<float> IsEndOfEpisodes();
+	py::array_t<float> GetStates();
+	void SetActions(py::array_t<float> np_array);
+	py::array_t<float> GetRewards();
 
 	//For Muscle Transitions
 	int GetNumTotalMuscleRelatedDofs(){return mEnvs[0]->GetNumTotalRelatedDofs();};
 	int GetNumMuscles(){return mEnvs[0]->GetCharacter()->GetMuscles().size();}
-	np::ndarray GetMuscleTorques();
-	np::ndarray GetDesiredTorques();
-	void SetActivationLevels(np::ndarray np_array);
+	py::array_t<float> GetMuscleTorques();
+	py::array_t<float> GetDesiredTorques();
+	void SetActivationLevels(py::array_t<float> np_array);
 	
-	p::list GetMuscleTuples();
+	py::list GetMuscleTuples();
 private:
 	std::vector<MASS::Environment*> mEnvs;
 

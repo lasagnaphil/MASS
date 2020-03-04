@@ -87,7 +87,7 @@ IsEndOfEpisode(int id)
 {
 	return mEnvs[id]->IsEndOfEpisode();
 }
-np::ndarray 
+py::array_t<float>
 EnvManager::
 GetState(int id)
 {
@@ -95,7 +95,7 @@ GetState(int id)
 }
 void 
 EnvManager::
-SetAction(np::ndarray np_array, int id)
+SetAction(py::array_t<float> np_array, int id)
 {
 	mEnvs[id]->SetAction(toEigenVector(np_array));
 }
@@ -138,7 +138,7 @@ Resets(bool RSI)
 		mEnvs[id]->Reset(RSI);
 	}
 }
-np::ndarray
+py::array_t<float>
 EnvManager::
 IsEndOfEpisodes()
 {
@@ -150,7 +150,7 @@ IsEndOfEpisodes()
 
 	return toNumPyArray(is_end_vector);
 }
-np::ndarray
+py::array_t<float>
 EnvManager::
 GetStates()
 {
@@ -164,7 +164,7 @@ GetStates()
 }
 void
 EnvManager::
-SetActions(np::ndarray np_array)
+SetActions(py::array_t<float> np_array)
 {
 	Eigen::MatrixXd action = toEigenMatrix(np_array);
 	for (int id = 0;id<mNumEnvs;++id)
@@ -172,7 +172,7 @@ SetActions(np::ndarray np_array)
 		mEnvs[id]->SetAction(action.row(id).transpose());
 	}
 }
-np::ndarray
+py::array_t<float>
 EnvManager::
 GetRewards()
 {
@@ -183,7 +183,7 @@ GetRewards()
 	}
 	return toNumPyArray(rewards);
 }
-np::ndarray
+py::array_t<float>
 EnvManager::
 GetMuscleTorques()
 {
@@ -196,7 +196,7 @@ GetMuscleTorques()
 	}
 	return toNumPyArray(mt);
 }
-np::ndarray
+py::array_t<float>
 EnvManager::
 GetDesiredTorques()
 {
@@ -212,24 +212,24 @@ GetDesiredTorques()
 
 void
 EnvManager::
-SetActivationLevels(np::ndarray np_array)
+SetActivationLevels(py::array_t<float> np_array)
 {
 	std::vector<Eigen::VectorXd> activations =toEigenVectorVector(np_array);
 	for (int id = 0; id < mNumEnvs; ++id)
 		mEnvs[id]->SetActivationLevels(activations[id]);
 }
 
-p::list
+py::list
 EnvManager::
 GetMuscleTuples()
 {
-	p::list all;
+	py::list all;
 	for (int id = 0; id < mNumEnvs; ++id)
 	{
 		auto& tps = mEnvs[id]->GetMuscleTuples();
 		for(int j=0;j<tps.size();j++)
 		{
-			p::list t;
+			py::list t;
 			t.append(toNumPyArray(tps[j].JtA));
 			t.append(toNumPyArray(tps[j].tau_des));
 			t.append(toNumPyArray(tps[j].L));
@@ -241,14 +241,11 @@ GetMuscleTuples()
 
 	return all;
 }
-using namespace boost::python;
 
-BOOST_PYTHON_MODULE(pymss)
+PYBIND11_MODULE(pymss, m)
 {
-	Py_Initialize();
-	np::initialize();
-
-	class_<EnvManager>("EnvManager",init<std::string,int>())
+	py::class_<EnvManager>(m, "EnvManager")
+        .def(py::init<std::string,int>())
 		.def("GetNumState",&EnvManager::GetNumState)
 		.def("GetNumAction",&EnvManager::GetNumAction)
 		.def("GetSimulationHz",&EnvManager::GetSimulationHz)
