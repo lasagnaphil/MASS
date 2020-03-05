@@ -5,10 +5,8 @@ py::array_t<float> toNumPyArray(const std::vector<float>& val)
     size_t n = val.size();
     py::array_t<float> array(n);
     py::buffer_info buf = array.request();
-	for(int i=0;i<n;i++)
-	{
-        ((float*)buf.ptr)[i] = val[i];
-	}
+
+    std::memcpy(buf.ptr, val.data(), n * sizeof(float));
 	return array;
 }
 py::array_t<float> toNumPyArray(const std::vector<double>& val)
@@ -16,12 +14,11 @@ py::array_t<float> toNumPyArray(const std::vector<double>& val)
     size_t n = val.size();
     py::array_t<float> array(n);
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
-	for(int i=0;i<n;i++)
-	{
-        ((float*)buf.ptr)[i] = val[i];
-	}
-
+    for (int i = 0; i < n; i++) {
+        ptr[i] = (float)val[i];
+    }
 	return array;
 }
 py::array_t<float> toNumPyArray(const std::vector<Eigen::VectorXd>& val)
@@ -30,14 +27,13 @@ py::array_t<float> toNumPyArray(const std::vector<Eigen::VectorXd>& val)
 	int m = val[0].rows();
 	py::array_t<float> array({n, m});
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
-	int index = 0;
 	for(int i=0;i<n;i++)
 	{
-		for(int j=0;j<m;j++)
-		{
-            ((float*)buf.ptr)[index++] = val[i][j];
-		}
+	    for (int j = 0; j < m; j++) {
+	        ptr[i*m+j] = (float)val[i](j);
+	    }
 	}
 
 	return array;	
@@ -50,12 +46,14 @@ py::array_t<float> toNumPyArray(const std::vector<Eigen::MatrixXd>& val)
 
     py::array_t<float> array({n, m, l});
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
 	int index = 0;
-	for(int i=0;i<n;i++)
-		for(int j=0;j<m;j++)
-			for(int k=0;k<l;k++)
-                ((float*)buf.ptr)[index++] = val[i](j,k);
+	for(int i=0;i<n;i++) {
+        for (int j = 0; j < m; j++)
+            for (int k = 0; k < l; k++)
+                ptr[i*m*l + j*l + k] = (float)val[i](j,k);
+    }
 
 	return array;
 }
@@ -66,14 +64,12 @@ py::array_t<float> toNumPyArray(const std::vector<std::vector<float>>& val)
 
     py::array_t<float> array({n, m});
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
 	int index = 0;
 	for(int i=0;i<n;i++)
 	{
-		for(int j=0;j<m;j++)
-		{
-            ((float*)buf.ptr)[index++] = val[i][j];
-		}
+        std::memcpy(ptr + i*m, val[i].data(), m*sizeof(float));
 	}
 
 	return array;
@@ -85,13 +81,13 @@ py::array_t<float> toNumPyArray(const std::vector<std::vector<double>>& val)
 
     py::array_t<float> array({n, m});
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
-	int index = 0;
 	for(int i=0;i<n;i++)
 	{
 		for(int j=0;j<m;j++)
 		{
-            ((float*)buf.ptr)[index++] = val[i][j];
+		    ptr[i*m+j] = (float)val[i][j];
 		}
 	}
 
@@ -104,10 +100,11 @@ py::array_t<float> toNumPyArray(const std::vector<bool>& val)
 
     py::array_t<float> array(n);
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
 	for(int i=0;i<n;i++)
 	{
-        ((float*)buf.ptr)[i] = val[i];
+        ptr[i] = (float)val[i];
 	}
 
 	return array;
@@ -120,10 +117,11 @@ py::array_t<float> toNumPyArray(const Eigen::VectorXd& vec)
 
     py::array_t<float> array(n);
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
 	for(int i =0;i<n;i++)
 	{
-        ((float*)buf.ptr)[i] = vec[i];
+        ptr[i] = (float)vec(i);
 	}
 
 	return array;
@@ -136,13 +134,14 @@ py::array_t<float> toNumPyArray(const Eigen::MatrixXd& matrix)
 
     py::array_t<float> array({n, m});
     py::buffer_info buf = array.request();
+    float* ptr = reinterpret_cast<float*>(buf.ptr);
 
 	int index = 0;
 	for(int i=0;i<n;i++)
 	{
 		for(int j=0;j<m;j++)
 		{
-            ((float*)buf.ptr)[index++] = matrix(i,j);
+            ptr[i*m+j] = (float)matrix(i,j);
 		}
 	}
 
@@ -157,7 +156,7 @@ py::array_t<float> toNumPyArray(const Eigen::Isometry3d& T)
     py::array_t<float> array({n, m});
     py::buffer_info buf = array.request();
 	float* dest = reinterpret_cast<float*>(buf.ptr);
-	int index = 0;
+
 	Eigen::Matrix3d R = T.linear();
 	Eigen::Vector3d p = T.translation();
 	dest[0] = T(0,0),dest[1] = T(0,1),dest[2] = T(0,2),dest[3] = p[0];
@@ -176,7 +175,7 @@ Eigen::VectorXd toEigenVector(const py::array_t<float>& array)
 
 	for(int i=0;i<array.shape(0);i++)
 	{
-		vec[i] = srcs[i];
+		vec(i) = (double)srcs[i];
 	}
 	return vec;
 }
@@ -187,12 +186,13 @@ std::vector<Eigen::VectorXd> toEigenVectorVector(const py::array_t<float>& array
 
     py::buffer_info buf = array.request();
 	float* srcs = reinterpret_cast<float*>(buf.ptr);
-	int index = 0;
-	
-	for(int i=0;i<array.shape(0);i++){
-		mat[i].resize(array.shape(1));
-		for(int j=0;j<array.shape(1);j++)
-			mat[i][j] = srcs[index++];
+	int n = array.shape(0);
+	int m = array.shape(1);
+
+	for(int i=0;i<n;i++){
+		mat[i].resize(m);
+		for(int j=0;j<m;j++)
+			mat[i](j) = (double)srcs[i*m+j];
 	}
 
 	return mat;	
@@ -203,13 +203,14 @@ Eigen::MatrixXd toEigenMatrix(const py::array_t<float>& array)
 
     py::buffer_info buf = array.request();
 	float* srcs = reinterpret_cast<float*>(buf.ptr);
+    int n = array.shape(0);
+    int m = array.shape(1);
 
-	int index = 0;
-	for(int i=0;i<array.shape(0);i++)
+	for(int i=0;i<n;i++)
 	{
-		for(int j=0;j<array.shape(1);j++)
+		for(int j=0;j<m;j++)
 		{
-			mat(i,j) = srcs[index++];
+			mat(i,j) = srcs[i*m+j];
 		}
 	}
 	return mat;
