@@ -17,6 +17,8 @@ Eigen::Matrix3d R_z(double z);
 class BVHNode
 {
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 	enum CHANNEL
 	{
 		Xpos=0,
@@ -51,6 +53,8 @@ private:
 class BVH
 {
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 	BVH(const dart::dynamics::SkeletonPtr& skel,const std::map<std::string,std::string>& bvh_map);
 
 	Eigen::VectorXd GetMotion(double t);

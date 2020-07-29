@@ -9,6 +9,8 @@ class Muscle;
 class Character
 {
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 	Character();
 
 	void LoadSkeleton(const std::string& path,bool create_obj = false);

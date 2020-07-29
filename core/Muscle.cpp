@@ -12,7 +12,7 @@ std::vector<int> sort_indices(const std::vector<double>& val)
 	return idx;
 }
 Anchor::
-Anchor(std::vector<BodyNode*> bns,std::vector<Eigen::Vector3d> lps,std::vector<double> ws)
+Anchor(std::vector<BodyNode*> bns,std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> lps,std::vector<double> ws)
 	:bodynodes(bns),local_positions(lps),weights(ws),num_related_bodies(bns.size())
 {
 
@@ -63,7 +63,7 @@ AddAnchor(const dart::dynamics::SkeletonPtr& skel,dart::dynamics::BodyNode* bn,c
 	// std::cout<<std::endl;
 	
 	std::vector<dart::dynamics::BodyNode*> lbs_body_nodes;
-	std::vector<Eigen::Vector3d> lbs_local_positions;
+	std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> lbs_local_positions;
 	std::vector<double> lbs_weights;
 
 	// lbs_body_nodes.resize(num_related_bodies);
@@ -140,7 +140,7 @@ Muscle::
 AddAnchor(dart::dynamics::BodyNode* bn,const Eigen::Vector3d& glob_pos)
 {
 	std::vector<dart::dynamics::BodyNode*> lbs_body_nodes;
-	std::vector<Eigen::Vector3d> lbs_local_positions;
+	std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> lbs_local_positions;
 	std::vector<double> lbs_weights;
 
 	lbs_body_nodes.push_back(bn);

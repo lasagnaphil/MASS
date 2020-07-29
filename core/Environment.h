@@ -16,6 +16,8 @@ struct MuscleTuple
 class Environment
 {
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 	Environment();
 
 	void SetUseMuscle(bool use_muscle){mUseMuscle = use_muscle;}

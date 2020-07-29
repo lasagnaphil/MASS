@@ -1,23 +1,30 @@
 #ifndef __MASS_MUSCLE_H__
 #define __MASS_MUSCLE_H__
 #include "dart/dart.hpp"
+#include <Eigen/StdVector>
 
 namespace MASS
 {
 struct Anchor
 {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 	int num_related_bodies;
 
 	std::vector<dart::dynamics::BodyNode*> bodynodes;
-	std::vector<Eigen::Vector3d> local_positions;
+	std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> local_positions;
 	std::vector<double> weights;
 
-	Anchor(std::vector<dart::dynamics::BodyNode*> bns,std::vector<Eigen::Vector3d> lps,std::vector<double> ws);
+	Anchor(std::vector<dart::dynamics::BodyNode*> bns,
+	       std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> lps,
+	       std::vector<double> ws);
 	Eigen::Vector3d GetPoint();
 };
 class Muscle
 {
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 	Muscle(std::string _name,double f0,double lm0,double lt0,double pen_angle,double lmax);
 	void AddAnchor(const dart::dynamics::SkeletonPtr& skel,dart::dynamics::BodyNode* bn,const Eigen::Vector3d& glob_pos,int num_related_bodies);
 	void AddAnchor(dart::dynamics::BodyNode* bn,const Eigen::Vector3d& glob_pos);
@@ -45,7 +52,7 @@ public:
 	int num_related_dofs;
 	std::vector<int> related_dof_indices;
 
-	std::vector<Eigen::Vector3d> mCachedAnchorPositions;
+	std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> mCachedAnchorPositions;
 	std::vector<Eigen::MatrixXd> mCachedJs;
 public:
 	//Dynamics
