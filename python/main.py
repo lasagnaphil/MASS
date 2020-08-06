@@ -61,7 +61,7 @@ class ReplayBuffer(object):
 class PPO(object):
 	def __init__(self,meta_file):
 		np.random.seed(seed = int(time.time()))
-		self.num_slaves = 16
+		self.num_slaves = 40
 		self.env = EnvManager(meta_file,self.num_slaves)
 		self.use_muscle = self.env.UseMuscle()
 		self.num_state = self.env.GetNumState()
@@ -180,7 +180,7 @@ class PPO(object):
 		while True:
 			counter += 1
 			if counter%10 == 0:
-				print('SIM : {}'.format(local_step),end='\r')
+				print('SIM : {}'.format(local_step))#,end='\r')
 			a_dist,v = self.model(Tensor(states))
 			actions = a_dist.sample().cpu().detach().numpy()
 			# actions = a_dist.loc.cpu().detach().numpy()
@@ -263,7 +263,7 @@ class PPO(object):
 					if param.grad is not None:
 						param.grad.data.clamp_(-0.5,0.5)
 				self.optimizer.step()
-			print('Optimizing sim nn : {}/{}'.format(j+1,self.num_epochs),end='\r')
+			print('Optimizing sim nn : {}/{}'.format(j+1,self.num_epochs))#,end='\r')
 		print('')
 	def OptimizeMuscleNN(self):
 		muscle_transitions = np.array(self.muscle_buffer.buffer)
@@ -301,7 +301,7 @@ class PPO(object):
 						param.grad.data.clamp_(-0.5,0.5)
 				self.optimizer_muscle.step()
 
-			print('Optimizing muscle nn : {}/{}'.format(j+1,self.num_epochs_muscle),end='\r')
+			print('Optimizing muscle nn : {}/{}'.format(j+1,self.num_epochs_muscle))#,end='\r')
 		self.loss_muscle = loss.cpu().detach().numpy().tolist()
 		print('')
 	def OptimizeModel(self):
