@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 import time
 from collections import namedtuple
@@ -20,11 +21,11 @@ from typing import List, Tuple, Dict
 def average_gradients(model):
     size = float(dist.get_world_size())
     for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.reduce_op.SUM)
+        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
         param.grad.data /= size
 
 Episode = namedtuple('Episode', ('s', 'a', 'r', 'value', 'logprob'))
-MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'Jtp', 'tau_des', 'L', 'b'))
+MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
 Transition = namedtuple('Transition', ('s', 'a', 'logprob', 'TD', 'GAE'))
 MarginalTuple = namedtuple('MarginalTuple', ('s_b', 'v'))
 
@@ -214,8 +215,6 @@ class MuscleLearner:
                 batch = MuscleTransition(*zip(*tuples))
 
                 stack_JtA = torch.from_numpy(np.vstack(batch.JtA).astype(np.float32)).to(self.device)
-                # Added
-                stack_Jtp = torch.from_numpy(np.vstack(batch.Jtp).astype(np.float32)).to(self.device)
 
                 stack_tau_des = torch.from_numpy(np.vstack(batch.tau_des).astype(np.float32)).to(self.device)
                 stack_L = torch.from_numpy(np.vstack(batch.L).astype(np.float32)).to(self.device)
@@ -227,7 +226,7 @@ class MuscleLearner:
 
                 stack_b = torch.from_numpy(np.vstack(batch.b).astype(np.float32)).to(self.device)
 
-                activation = self.model(stack_JtA, stack_Jtp, stack_tau_des)
+                activation = self.model(stack_JtA, stack_tau_des)
                 tau = torch.einsum('ijk,ik->ij', (stack_L, activation)) + stack_b
 
                 loss_reg = activation.pow(2).mean()
@@ -261,8 +260,8 @@ class BodyParamSampler:
     def learn(self, marginal_tuples: List[MarginalTuple]) -> Dict:
         return {}
 
-    def sample(self, num_envs: int, agents_per_env: int) -> np.array:
-        return np.zeros((num_envs, agents_per_env))
+    def sample(self, agents_per_env: int) -> np.array:
+        return np.zeros((agents_per_env,))
 
 class VectorEnv:
     def __init__(self, meta_file: str, num_slaves: int):
@@ -336,12 +335,9 @@ class VectorEnv:
             self.env.SetActions(actions)
             if self.use_muscle:
                 mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
-                pmt = torch.from_numpy(self.env.GetPassiveMuscleTorques()).to(self.device)
-                # cm = Tensor(self.env.GetParamStates())
                 for i in range(self.num_simulation_per_control // 2):
                     dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
-
-                    activations = self.muscle_model(mt, pmt, dt).cpu().detach().numpy()
+                    activations = self.muscle_model(mt, dt).cpu().detach().numpy()
                     self.env.SetActivationLevels(activations)
                     self.env.Steps(2)
             else:
@@ -373,7 +369,7 @@ class VectorEnv:
         muscle_tuples = self.env.GetMuscleTuples()
         for i in range(len(muscle_tuples)):
             muscle_data.append(MuscleTransition(
-                muscle_tuples[i][0], muscle_tuples[i][1], muscle_tuples[i][2], muscle_tuples[i][3], muscle_tuples[i][4]))
+                muscle_tuples[i][0], muscle_tuples[i][1], muscle_tuples[i][2], muscle_tuples[i][3]))
 
         return total_episodes, muscle_data
 
@@ -388,11 +384,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model', help='model path')
     parser.add_argument('-d', '--meta', help='meta file')
+    parser.add_argument('-r', '--rank', help='node rank')
+    parser.add_argument('-w', '--world_size', help='world size')
 
     args = parser.parse_args()
     if args.meta is None:
         print('Provide meta file')
         exit()
+
+    rank = int(args.rank)
+    world_size = int(args.world_size)
+
+    os.environ['MASTER_ADDR'] = '10.1.1.1'
+    os.environ['MASTER_PORT'] = '29500'
+    dist_backend = torch.device('nccl' if torch.cuda.is_available() else 'mpi')
+    dist.init_process_group(dist_backend, rank=rank, world_size=world_size)
+
+    print('Initialized node with rank {}!'.format(rank))
 
     num_agents_per_env = 40
 
@@ -404,35 +412,34 @@ if __name__ == "__main__":
     body_param_sampler = BodyParamSampler()
 
     while True:
-        body_params = body_param_sampler.sample(num_vector_envs, num_agents_per_env)
-        for env in envs:
-            env.reset_with_new_body(body_params)
+        body_params = body_param_sampler.sample(num_agents_per_env)
+        env.reset_with_new_body(body_params)
 
-        episodes, muscle_transitions = functools.reduce(
-            operator.iconcat, [env.generate_tuples() for env in envs], [])
+        episodes, muscle_transitions = env.generate_tuples()
 
         marginal_tuples, ref_stats = ref_learner.learn(episodes)
         muscle_stats = muscle_learner.learn(muscle_transitions)
         body_sample_stats = body_param_sampler.learn(marginal_tuples)
 
         # TODO: print stats
-        print(ref_stats)
-        print(muscle_stats)
-        print(body_sample_stats)
+        if rank == 0:
+            print(ref_stats)
+            print(muscle_stats)
+            print(body_sample_stats)
 
-        for env in envs:
-            env.update_model_weights(ref_learner.get_model_weights(), muscle_learner.get_model_weights())
+        env.update_model_weights(ref_learner.get_model_weights(), muscle_learner.get_model_weights())
 
-        ref_learner.save()
-        muscle_learner.save()
+        if rank == 0:
+            ref_learner.save()
+            muscle_learner.save()
 
-        if ref_learner.max_return_epoch == ref_learner.num_evaluation:
-            ref_learner.model.save('../nn/max.pt')
-            muscle_learner.save('../nn/max_muscle.pt')
+            if ref_learner.max_return_epoch == ref_learner.num_evaluation:
+                ref_learner.model.save('../nn/max.pt')
+                muscle_learner.save('../nn/max_muscle.pt')
 
-        if ref_learner.num_evaluation % 100 == 0:
-            ref_learner.model.save('../nn/'+str(ref_learner.num_evaluation//100)+'.pt')
-            muscle_learner.save('../nn/'+str(self.num_evaluation//100)+'_muscle.pt')
+            if ref_learner.num_evaluation % 100 == 0:
+                ref_learner.model.save('../nn/'+str(ref_learner.num_evaluation//100)+'.pt')
+                muscle_learner.save('../nn/'+str(self.num_evaluation//100)+'_muscle.pt')
 
     """
     ppo = PPO(args.meta)
