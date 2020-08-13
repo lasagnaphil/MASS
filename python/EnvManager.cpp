@@ -1,36 +1,43 @@
 #include "EnvManager.h"
 #include "DARTHelper.h"
-#include <omp.h>
+#include <thread>
 
 EnvManager::
 EnvManager(std::string meta_file,int num_envs)
-	:mNumEnvs(num_envs)
+	:mNumEnvs(num_envs), mEnvs(num_envs)
 {
 	dart::math::seedRand();
-	omp_set_num_threads(mNumEnvs);
-	for(int i = 0;i<mNumEnvs;i++){
-		mEnvs.push_back(new MASS::Environment());
-		MASS::Environment* env = mEnvs.back();
 
-		env->Initialize(meta_file,false);
-		// env->SetUseMuscle(false);
-		// env->SetControlHz(30);
-		// env->SetSimulationHz(600);
-		// env->SetRewardParameters(0.65,0.1,0.15,0.1);
+    std::vector<std::thread> threads;
 
-		// MASS::Character* character = new MASS::Character();
-		// character->LoadSkeleton(std::string(MASS_ROOT_DIR)+std::string("/data/human.xml"),false);
-		// if(env->GetUseMuscle())
-		// 	character->LoadMuscles(std::string(MASS_ROOT_DIR)+std::string("/data/muscle.xml"));
+	for (int i = 0; i < mNumEnvs; i++) {
+	    mEnvs[i] = new MASS::Environment();
+	    MASS::Environment* env = mEnvs[i];
+	    threads.emplace_back([meta_file, env]() {
+	        env->Initialize(meta_file, false);
 
-		// character->LoadBVH(std::string(MASS_ROOT_DIR)+std::string("/data/motion/walk.bvh"),true);
-		
-		// double kp = 300.0;
-		// character->SetPDParameters(kp,sqrt(2*kp));
-		// env->SetCharacter(character);
-		// env->SetGround(MASS::BuildFromFile(std::string(MASS_ROOT_DIR)+std::string("/data/ground.xml")));
+            // env->SetUseMuscle(false);
+            // env->SetControlHz(30);
+            // env->SetSimulationHz(600);
+            // env->SetRewardParameters(0.65,0.1,0.15,0.1);
 
-		// env->Initialize();
+            // MASS::Character* character = new MASS::Character();
+            // character->LoadSkeleton(std::string(MASS_ROOT_DIR)+std::string("/data/human.xml"),false);
+            // if(env->GetUseMuscle())
+            // 	character->LoadMuscles(std::string(MASS_ROOT_DIR)+std::string("/data/muscle.xml"));
+
+            // character->LoadBVH(std::string(MASS_ROOT_DIR)+std::string("/data/motion/walk.bvh"),true);
+
+            // double kp = 300.0;
+            // character->SetPDParameters(kp,sqrt(2*kp));
+            // env->SetCharacter(character);
+            // env->SetGround(MASS::BuildFromFile(std::string(MASS_ROOT_DIR)+std::string("/data/ground.xml")));
+
+            // env->Initialize();
+	    });
+    }
+	for (int i = 0; i < mNumEnvs; i++) {
+	    threads[i].join();
 	}
 }
 int
@@ -110,24 +117,40 @@ void
 EnvManager::
 Steps(int num)
 {
-#pragma omp parallel for
-	for (int id = 0;id<mNumEnvs;++id)
+    std::vector<std::thread> threads;
+
+	for (int id = 0; id < mNumEnvs; id++)
 	{
-		for(int j=0;j<num;j++)
-			mEnvs[id]->Step();
+        MASS::Environment* env = mEnvs[id];
+	    threads.emplace_back([num, env](){
+	        for (int j = 0; j < num; j++) {
+                env->Step();
+            }
+	    });
 	}
+
+    for (int id = 0; id < mNumEnvs; id++) {
+        threads[id].join();
+    }
 }
 void
 EnvManager::
-StepsAtOnce()
-{
-	int num = this->GetNumSteps();
-#pragma omp parallel for
-	for (int id = 0;id<mNumEnvs;++id)
-	{
-		for(int j=0;j<num;j++)
-			mEnvs[id]->Step();
-	}
+StepsAtOnce() {
+    std::vector<std::thread> threads;
+
+    int num = this->GetNumSteps();
+    for (int id = 0; id < mNumEnvs; id++) {
+        MASS::Environment* env = mEnvs[id];
+        threads.emplace_back([num, env](){
+            for (int j = 0; j < num; j++) {
+                env->Step();
+            }
+        });
+    }
+
+    for (int id = 0; id < mNumEnvs; id++) {
+        threads[id].join();
+    }
 }
 void
 EnvManager::
@@ -187,26 +210,44 @@ py::array_t<float>
 EnvManager::
 GetMuscleTorques()
 {
-	std::vector<Eigen::VectorXd> mt(mNumEnvs);
+    std::vector<std::thread> threads;
+    std::vector<Eigen::VectorXd> mt(mNumEnvs);
 
-#pragma omp parallel for
 	for (int id = 0; id < mNumEnvs; ++id)
 	{
-		mt[id] = mEnvs[id]->GetMuscleTorques();
+	    MASS::Environment* env = mEnvs[id];
+	    Eigen::VectorXd* mt_ptr = &mt[id];
+	    threads.emplace_back([env, mt_ptr](){
+            *mt_ptr = env->GetMuscleTorques();
+	    });
 	}
+
+    for (int id = 0; id < mNumEnvs; id++) {
+        threads[id].join();
+    }
+
 	return toNumPyArray(mt);
 }
 py::array_t<float>
 EnvManager::
 GetDesiredTorques()
 {
+    std::vector<std::thread> threads;
 	std::vector<Eigen::VectorXd> tau_des(mNumEnvs);
 	
-#pragma omp parallel for
 	for (int id = 0; id < mNumEnvs; ++id)
 	{
-		tau_des[id] = mEnvs[id]->GetDesiredTorques();
+	    MASS::Environment* env = mEnvs[id];
+	    Eigen::VectorXd* tau_des_ptr = &tau_des[id];
+	    threads.emplace_back([env, tau_des_ptr](){
+            *tau_des_ptr = env->GetDesiredTorques();
+	    });
 	}
+
+    for (int id = 0; id < mNumEnvs; id++) {
+        threads[id].join();
+    }
+
 	return toNumPyArray(tau_des);
 }
 
