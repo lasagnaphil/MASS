@@ -5,7 +5,7 @@ add_compile_options(-fPIC)
 add_compile_options(-Wdeprecated-declarations)
 
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR})
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 
 # include(FindOpenMP)
 # if(OPENMP_FOUND)
