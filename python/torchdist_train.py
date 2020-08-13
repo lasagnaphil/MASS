@@ -9,19 +9,13 @@ import time
 from collections import namedtuple
 from collections import deque
 from pathlib import Path
+from matplotlib import pyplot as plt
 
 import numpy as np
 from pymss import EnvManager
 from Model import *
 
 from typing import List, Tuple, Dict
-
-# Gradient averaging via torch.distributed.
-def average_gradients(model):
-    size = float(dist.get_world_size())
-    for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        param.grad.data /= size
 
 Episode = namedtuple('Episode', ('s', 'a', 'r', 'value', 'logprob'))
 MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
@@ -50,7 +44,16 @@ class ReferenceLearner:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.model = SimulationNN(num_state, num_action).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        if self.run_distributed:
+            self.ddp_model = DDP(self.model)
+            self.model = self.ddp_model.module
+            self.optimizer = optim.Adam(self.ddp_model.parameters(), lr=self.learning_rate)
+            for param in self.ddp_model.parameters():
+                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+        else:
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            for param in self.model.parameters():
+                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
 
         self.num_evaluation = 0
         self.num_tuple_so_far = 0
@@ -58,6 +61,7 @@ class ReferenceLearner:
         self.max_return_epoch = 1
 
         self.tic = time.time()
+
 
         self.stats = {}
 
@@ -122,7 +126,11 @@ class ReferenceLearner:
                 stack_td = torch.from_numpy(np.vstack(batch.TD).astype(np.float32)).to(self.device)
                 stack_gae = torch.from_numpy(np.vstack(batch.GAE).astype(np.float32)).to(self.device)
 
-                a_dist, v = self.model(stack_s)
+                if self.run_distributed:
+                    a_dist, v = self.ddp_model(stack_s)
+                else:
+                    a_dist, v = self.model(stack_s)
+
                 '''Critic Loss'''
                 loss_critic = ((v - stack_td).pow(2)).mean()
 
@@ -142,12 +150,6 @@ class ReferenceLearner:
 
                 self.optimizer.zero_grad()
                 loss.backward(retain_graph=True)
-                for param in self.model.parameters():
-                    if param.grad is not None:
-                        param.grad.data.clamp_(-0.5, 0.5)
-
-                if self.run_distributed:
-                    average_gradients(self.model)
                 self.optimizer.step()
             # print('Optimizing sim nn : {}/{}'.format(j+1,self.num_epochs),end='\r')
         # print('')
@@ -173,7 +175,7 @@ class ReferenceLearner:
             'num_evaluation': self.num_evaluation,
             'loss_actor': sum_loss_actor,
             'loss_critic': sum_loss_critic,
-            'noise': self.model.log_std.exp().mean().item(),
+            'noise': self.model.get_noise(),
             'num_transitions_so_far': self.num_tuple_so_far,
             'num_transitions': num_tuple,
             'num_episode': num_episode,
@@ -201,7 +203,16 @@ class MuscleLearner:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.model = MuscleNN(num_muscle_dofs, self.num_action, self.num_muscles).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        if self.run_distributed:
+            self.ddp_model = DDP(self.model)
+            self.model = self.ddp_model.module
+            self.optimizer = optim.Adam(self.ddp_model.parameters(), lr=self.learning_rate)
+            for param in self.ddp_model.parameters():
+                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+        else:
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            for param in self.model.parameters():
+                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
 
         self.stats = {}
 
@@ -233,7 +244,11 @@ class MuscleLearner:
 
                 stack_b = torch.from_numpy(np.vstack(batch.b).astype(np.float32)).to(self.device)
 
-                activation = self.model(stack_JtA, stack_tau_des)
+                if self.run_distributed:
+                    activation = self.ddp_model(stack_JtA, stack_tau_des)
+                else:
+                    activation = self.model(stack_JtA, stack_tau_des)
+
                 tau = torch.einsum('ijk,ik->ij', (stack_L, activation)) + stack_b
 
                 loss_reg = activation.pow(2).mean()
@@ -246,12 +261,6 @@ class MuscleLearner:
 
                 self.optimizer.zero_grad()
                 loss.backward(retain_graph=True)
-                for param in self.model.parameters():
-                    if param.grad is not None:
-                        param.grad.data.clamp_(-0.5, 0.5)
-
-                if self.run_distributed:
-                    average_gradients(self.model)
                 self.optimizer.step()
 
             # print('Optimizing muscle nn : {}/{}'.format(j+1,self.num_epochs_muscle),end='\r')
@@ -383,6 +392,28 @@ class VectorEnv:
 
         return total_episodes, muscle_data
 
+def plot_rewards(filename, y, title, num_fig=1, ylim=True):
+    temp_y = np.zeros(y.shape)
+    if y.shape[0]>5:
+        temp_y[0] = y[0]
+        temp_y[1] = 0.5*(y[0] + y[1])
+        temp_y[2] = 0.3333*(y[0] + y[1] + y[2])
+        temp_y[3] = 0.25*(y[0] + y[1] + y[2] + y[3])
+        for i in range(4,y.shape[0]):
+            temp_y[i] = np.sum(y[i-4:i+1])*0.2
+
+    plt.figure(num_fig)
+    plt.clf()
+    plt.title(title)
+    plt.plot(y,'b')
+    
+    plt.plot(temp_y,'r')
+
+    plt.show()
+    if ylim:
+        plt.ylim([0,1])
+
+    plt.savefig(filename)
 
 import argparse
 import os
@@ -392,45 +423,57 @@ import asyncio
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument('--local_rank', type=int)
     parser.add_argument('-m', '--model', help='model path')
     parser.add_argument('-d', '--meta', help='meta file')
-    parser.add_argument('-r', '--rank', help='node rank')
-    parser.add_argument('-w', '--world-size', help='world size')
+    # parser.add_argument('-r', '--rank', help='node rank')
+    # parser.add_argument('-w', '--world-size', help='world size')
     parser.add_argument('-n', '--name', help='exp name', default='default')
-    parser.add_argument('--run-single-node', help='run single node (test without mpi)', action='store_true')
-    parser.set_defaults(run_single_node=True)
+    parser.add_argument('--run_single_node', help='run single node (test without mpi)', action='store_true')
+    parser.set_defaults(run_single_node=False)
 
     args = parser.parse_args()
     if args.meta is None:
         print('Provide meta file')
         exit()
 
-    rank = int(args.rank)
-    world_size = int(args.world_size)
+    # rank = int(args.rank)
+    # world_size = int(args.world_size)
 
-    os.environ['MASTER_ADDR'] = '10.1.20.1'
-    os.environ['MASTER_PORT'] = '29500'
+    # os.environ['MASTER_ADDR'] = '10.1.20.1'
+    # os.environ['MASTER_PORT'] = '29500'
 
     if not args.run_single_node:
         if torch.cuda.is_available():
             dist_backend = 'nccl'
         else:
             dist_backend = 'gloo'
-        dist.init_process_group(dist_backend, rank=rank, world_size=world_size)
-        print('Initialized node with rank {}!'.format(rank), flush=True)
+        dist.init_process_group(dist_backend)
+        rank = torch.distributed.get_rank()
+        print(f'Initialized node with rank {rank}!', flush=True)
 
     num_agents_per_env = 40
-    buffer_size = 2048 // world_size
+    if args.run_single_node:
+        buffer_size = 2048
+    else:
+        buffer_size = 2048 // torch.distributed.get_world_size()
+
     env = VectorEnv(meta_file=args.meta, num_slaves=num_agents_per_env, buffer_size=buffer_size)
     env_params = env.get_params()
+
+    # Set OMP_NUM_THREADS=1 AFTER C++ env has been initialized
+    torch.set_num_threads(1)
 
     use_distributed = not args.run_single_node
     ref_learner = ReferenceLearner(env_params['num_state'], env_params['num_action'], use_distributed)
     muscle_learner = MuscleLearner(env_params['num_action'], env_params['num_muscles'], env_params['num_muscle_dofs'], use_distributed)
     body_param_sampler = BodyParamSampler()
 
+    Path('../plot').mkdir(exist_ok=True)
     Path('../nn').mkdir(exist_ok=True)
     Path(f'../nn/{args.name}').mkdir(exist_ok=True)
+
+    rewards = []
 
     while True:
         body_params = body_param_sampler.sample(num_agents_per_env)
@@ -439,21 +482,21 @@ if __name__ == "__main__":
         start = time.time()
         episodes, muscle_transitions = env.generate_tuples()
         end = time.time()
-        if rank == 0: print(f"Generating Tuples: {end - start}s")
+        if not use_distributed or rank == 0: print(f"Generating Tuples: {end - start}s")
 
         start = time.time()
         marginal_tuples = ref_learner.learn(episodes)
         end = time.time()
-        if rank == 0: print(f"Ref learner: {end - start}s")
+        if not use_distributed or rank == 0: print(f"Ref learner: {end - start}s")
 
         start = time.time()
         muscle_learner.learn(muscle_transitions)
         end = time.time()
-        if rank == 0: print(f"Muscle learner: {end - start}s")
+        if not use_distributed or rank == 0: print(f"Muscle learner: {end - start}s")
 
         body_param_sampler.learn(marginal_tuples)
 
-        if rank == 0:
+        if not use_distributed or rank == 0:
             print('# {} === {} ==='.format(ref_learner.stats['num_evaluation'], ref_learner.stats['time']))
             print('||Loss Actor               : {:.4f}'.format(ref_learner.stats['loss_actor']))
             print('||Loss Critic              : {:.4f}'.format(ref_learner.stats['loss_critic']))
@@ -468,6 +511,8 @@ if __name__ == "__main__":
             print('||Max Avg Retun So far     : {:.3f} at #{}'.format(
                 ref_learner.stats['max_avg_return_so_far'], ref_learner.stats['max_avg_return_so_far_epoch']))
 
+            rewards.append(ref_learner.stats['avg_reward_per_episode'])
+
             ref_learner.save(f'../nn/{args.name}/current.pt')
             muscle_learner.save(f'../nn/{args.name}/current_muscle.pt')
 
@@ -478,6 +523,8 @@ if __name__ == "__main__":
             if ref_learner.num_evaluation % 100 == 0:
                 ref_learner.save(f'../nn/{args.name}/{ref_learner.num_evaluation//100}.pt')
                 muscle_learner.save(f'../nn/{args.name}/{ref_learner.num_evaluation//100}_muscle.pt')
+
+            plot_rewards(f'../plot/{args.name}.png', np.array(rewards), 'reward', 0, False)
 
         env.update_model_weights(ref_learner.get_model_weights(), muscle_learner.get_model_weights())
         
