@@ -2,12 +2,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import torchvision.transforms as T
 import math
 import time
 from collections import OrderedDict
 import numpy as np
-from IPython import embed
 
 MultiVariateNormal = torch.distributions.Normal
 temp = MultiVariateNormal.log_prob

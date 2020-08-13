@@ -6,3 +6,5 @@ nn/
 cmake-build-*/
 **/__pycache__/
 .idea/
+
+logs/
