@@ -5,7 +5,7 @@ add_compile_options(-fPIC)
 add_compile_options(-Wdeprecated-declarations)
 
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR})
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 
 # include(FindOpenMP)
 # if(OPENMP_FOUND)
@@ -17,6 +17,7 @@ set(CMAKE_CXX_STANDARD 14)
 find_package(DART REQUIRED COMPONENTS collision-bullet CONFIG)
 find_package(PythonLibs REQUIRED)
 find_package(pybind11 REQUIRED)
+find_package(TBB REQUIRED)
 
 link_directories(../core/)
 include_directories(../core/)
@@ -26,8 +27,10 @@ file(GLOB srcs "*.h" "*.cpp")
 include_directories(${PYTHON_INCLUDE_DIR})
 include_directories(${DART_INCLUDE_DIRS})
 include_directories(${PYBIND11_INCLUDE_DIRS})
+include_directories(${TBB_INCLUDE_DIRS})
+add_definitions(${TBB_DEFINITIONS})
 
 add_library(pymss SHARED ${srcs})
 
-target_link_libraries(pymss ${DART_LIBRARIES} ${PYTHON_LIBRARIES} mss pybind11::module)
+target_link_libraries(pymss ${DART_LIBRARIES} ${PYTHON_LIBRARIES} ${TBB_LIBRARIES} mss pybind11::module)
 set_target_properties(pymss PROPERTIES PREFIX "" )
