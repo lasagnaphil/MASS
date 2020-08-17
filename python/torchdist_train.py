@@ -22,11 +22,19 @@ MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
 Transition = namedtuple('Transition', ('s', 'a', 'logprob', 'TD', 'GAE'))
 MarginalTuple = namedtuple('MarginalTuple', ('s_b', 'v'))
 
+def average_gradients(model):
+    size = float(dist.get_world_size())
+    for param in model.parameters():
+        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
+        param.grad.data /= size
+
 class ReferenceLearner:
-    def __init__(self, num_state, num_action, run_distributed=False):
+    def __init__(self, num_state, num_action, run_distributed=False, use_ddp=False, rank=0):
         self.num_state = num_state
         self.num_action = num_action
         self.run_distributed = run_distributed
+        self.use_ddp = use_ddp
+        self.rank = rank
 
         self.gamma = 0.99
         self.lb = 0.99
@@ -44,16 +52,16 @@ class ReferenceLearner:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.model = SimulationNN(num_state, num_action).to(self.device)
-        if self.run_distributed:
+        if self.use_ddp:
             self.ddp_model = DDP(self.model)
             self.model = self.ddp_model.module
-            self.optimizer = optim.Adam(self.ddp_model.parameters(), lr=self.learning_rate)
-            for param in self.ddp_model.parameters():
-                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+            parameters = self.ddp_model.parameters()
         else:
-            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            for param in self.model.parameters():
-                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+            parameters = self.model.parameters()
+
+        self.optimizer = optim.Adam(parameters, lr=self.learning_rate)
+        for param in parameters:
+            param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
 
         self.num_evaluation = 0
         self.num_tuple_so_far = 0
@@ -61,7 +69,6 @@ class ReferenceLearner:
         self.max_return_epoch = 1
 
         self.tic = time.time()
-
 
         self.stats = {}
 
@@ -71,7 +78,7 @@ class ReferenceLearner:
     def save(self, name):
         self.model.save(name)
 
-    def learn(self, episodes: List[List[Episode]]) -> Tuple[List[MarginalTuple], Dict]:
+    def learn(self, episodes: List[List[Episode]]) -> Tuple[List[MarginalTuple]]:
         num_episode = 0
         num_tuple = 0
 
@@ -126,7 +133,7 @@ class ReferenceLearner:
                 stack_td = torch.from_numpy(np.vstack(batch.TD).astype(np.float32)).to(self.device)
                 stack_gae = torch.from_numpy(np.vstack(batch.GAE).astype(np.float32)).to(self.device)
 
-                if self.run_distributed:
+                if self.use_ddp:
                     a_dist, v = self.ddp_model(stack_s)
                 else:
                     a_dist, v = self.model(stack_s)
@@ -149,7 +156,10 @@ class ReferenceLearner:
                 sum_loss_critic += loss_critic.item()
 
                 self.optimizer.zero_grad()
-                loss.backward(retain_graph=True)
+                # loss.backward(retain_graph=True)
+                loss.backward()
+                if self.run_distributed and not self.use_ddp:
+                    average_gradients(self.model)
                 self.optimizer.step()
             # print('Optimizing sim nn : {}/{}'.format(j+1,self.num_epochs),end='\r')
         # print('')
@@ -190,10 +200,12 @@ class ReferenceLearner:
         return [] # (s_b, V)
 
 class MuscleLearner:
-    def __init__(self, num_action, num_muscles, num_muscle_dofs, run_distributed=False):
+    def __init__(self, num_action, num_muscles, num_muscle_dofs, run_distributed=False, use_ddp=False, rank=0):
         self.num_action = num_action
         self.num_muscles = num_muscles
         self.run_distributed = run_distributed
+        self.use_ddp = use_ddp
+        self.rank = rank
 
         self.num_epochs_muscle = 3
         self.muscle_batch_size = 128
@@ -203,16 +215,16 @@ class MuscleLearner:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.model = MuscleNN(num_muscle_dofs, self.num_action, self.num_muscles).to(self.device)
-        if self.run_distributed:
+        if self.use_ddp:
             self.ddp_model = DDP(self.model)
             self.model = self.ddp_model.module
-            self.optimizer = optim.Adam(self.ddp_model.parameters(), lr=self.learning_rate)
-            for param in self.ddp_model.parameters():
-                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+            parameters = self.ddp_model.parameters()
         else:
-            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            for param in self.model.parameters():
-                param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+            parameters = self.model.parameters()
+
+        self.optimizer = optim.Adam(parameters, lr=self.learning_rate)
+        for param in parameters:
+            param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
 
         self.stats = {}
 
@@ -244,7 +256,7 @@ class MuscleLearner:
 
                 stack_b = torch.from_numpy(np.vstack(batch.b).astype(np.float32)).to(self.device)
 
-                if self.run_distributed:
+                if self.use_ddp:
                     activation = self.ddp_model(stack_JtA, stack_tau_des)
                 else:
                     activation = self.model(stack_JtA, stack_tau_des)
@@ -260,7 +272,10 @@ class MuscleLearner:
                 sum_loss += loss.item()
 
                 self.optimizer.zero_grad()
-                loss.backward(retain_graph=True)
+                # loss.backward(retain_graph=True)
+                loss.backward()
+                if self.run_distributed and not self.use_ddp:
+                    average_gradients(self.model)
                 self.optimizer.step()
 
             # print('Optimizing muscle nn : {}/{}'.format(j+1,self.num_epochs_muscle),end='\r')
@@ -431,6 +446,10 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--name', help='exp name', default='default')
     parser.add_argument('--run_single_node', help='run single node (test without mpi)', action='store_true')
     parser.set_defaults(run_single_node=False)
+    parser.add_argument('--use_mpi', help='Use MPI backend for torch', action='store_true')
+    parser.set_defaults(use_mpi=False)
+    parser.add_argument('--use_ddp', help='Use DDP for torch', action='store_true')
+    parser.set_defaults(use_ddp=False)
 
     args = parser.parse_args()
     if args.meta is None:
@@ -444,10 +463,15 @@ if __name__ == "__main__":
     # os.environ['MASTER_PORT'] = '29500'
 
     if not args.run_single_node:
-        if torch.cuda.is_available():
-            dist_backend = 'nccl'
+        if args.use_mpi:
+            # mpi backend
+            dist_backend = 'mpi'
         else:
-            dist_backend = 'gloo'
+            # gloo / nccl backend
+            if torch.cuda.is_available():
+                dist_backend = 'nccl'
+            else:
+                dist_backend = 'gloo'
         dist.init_process_group(dist_backend)
         rank = torch.distributed.get_rank()
         print(f'Initialized node with rank {rank}!', flush=True)
@@ -461,12 +485,9 @@ if __name__ == "__main__":
     env = VectorEnv(meta_file=args.meta, num_slaves=num_agents_per_env, buffer_size=buffer_size)
     env_params = env.get_params()
 
-    # Set OMP_NUM_THREADS=1 AFTER C++ env has been initialized
-    torch.set_num_threads(1)
-
     use_distributed = not args.run_single_node
-    ref_learner = ReferenceLearner(env_params['num_state'], env_params['num_action'], use_distributed)
-    muscle_learner = MuscleLearner(env_params['num_action'], env_params['num_muscles'], env_params['num_muscle_dofs'], use_distributed)
+    ref_learner = ReferenceLearner(env_params['num_state'], env_params['num_action'], use_distributed, args.use_ddp)
+    muscle_learner = MuscleLearner(env_params['num_action'], env_params['num_muscles'], env_params['num_muscle_dofs'], use_distributed, args.use_ddp)
     body_param_sampler = BodyParamSampler()
 
     Path('../plot').mkdir(exist_ok=True)
@@ -526,8 +547,8 @@ if __name__ == "__main__":
 
             plot_rewards(f'../plot/{args.name}.png', np.array(rewards), 'reward', 0, False)
 
+            # Flushing is needed for SLURM log output!
+            print('', flush=True)
+
         env.update_model_weights(ref_learner.get_model_weights(), muscle_learner.get_model_weights())
         
-        # Flushing is needed for SLURM log output!
-        print('', flush=True)
-

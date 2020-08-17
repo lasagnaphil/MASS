@@ -14,6 +14,9 @@ node_count=${#nodes_array[@]}
 
 pushd python 
 
+export MASTER_ADDR=${nodes_array[0]}
+export MASTER_PORT=29500
+
 prun $PYTHON_EXEC torchdist_test.py
 
 popd
