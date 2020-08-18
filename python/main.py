@@ -61,7 +61,7 @@ class ReplayBuffer(object):
 class PPO(object):
 	def __init__(self,meta_file):
 		np.random.seed(seed = int(time.time()))
-		self.num_slaves = 40
+		self.num_slaves = 32
 		self.env = EnvManager(meta_file,self.num_slaves)
 		self.use_muscle = self.env.UseMuscle()
 		self.num_state = self.env.GetNumState()
@@ -81,7 +81,7 @@ class PPO(object):
 		self.gamma = 0.99
 		self.lb = 0.99
 
-		self.buffer_size = 2048
+		self.buffer_size = 4096 # 2048
 		self.batch_size = 128
 		self.muscle_batch_size = 128
 		self.replay_buffer = ReplayBuffer(30000)

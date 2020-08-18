@@ -17,12 +17,29 @@ import numpy as np
 from pymss import EnvManager
 from Model import *
 
+from dataclasses import dataclass
+
 from typing import List, Tuple, Dict
 
-Episode = namedtuple('Episode', ('s', 'a', 'r', 'value', 'logprob'))
 MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
-Transition = namedtuple('Transition', ('s', 'a', 'logprob', 'TD', 'GAE'))
 MarginalTuple = namedtuple('MarginalTuple', ('s_b', 'v'))
+
+class Sample:
+    def __init__(self, num_agents, buffer_size, state_size, action_size):
+        assert buffer_size % num_agents == 0, "buffer_size must be a multiple of num_agents"
+
+        self.num_agents = num_agents
+        self.buffer_size = buffer_size
+        self.num_iters = buffer_size // num_agents
+        self.state_size = state_size
+        self.action_size = action_size
+
+        self.states = np.zeros((num_agents, self.num_iters, state_size), dtype=np.float32)
+        self.actions = np.zeros((num_agents, self.num_iters, action_size), dtype=np.float32)
+        self.rewards = np.zeros((num_agents, self.num_iters), dtype=np.float32)
+        self.values = np.zeros((num_agents, self.num_iters + 1), dtype=np.float32)
+        self.logprobs = np.zeros((num_agents, self.num_iters), dtype=np.float32)
+        self.dones = np.zeros((num_agents, self.num_iters), dtype=np.bool)
 
 def average_gradients(model):
     size = float(dist.get_world_size())
@@ -30,8 +47,11 @@ def average_gradients(model):
         dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
         param.grad.data /= size
 
+def flatten_buffer(buffer: np.array):
+    return buffer.reshape(buffer.shape[0] * buffer.shape[1], *buffer.shape[2:])
+
 class ReferenceLearner:
-    def __init__(self, num_state, num_action):
+    def __init__(self, num_state, num_action, minibatch_size=128, enable_hvd=False):
         self.num_state = num_state
         self.num_action = num_action
 
@@ -39,7 +59,7 @@ class ReferenceLearner:
         self.lb = 0.99
 
         self.num_epochs = 10
-        self.batch_size = 128
+        self.minibatch_size = minibatch_size
 
         self.default_learning_rate = 1E-4
         self.default_clip_ratio = 0.2
@@ -53,13 +73,15 @@ class ReferenceLearner:
         self.model = SimulationNN(num_state, num_action).to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        self.optimizer = hvd.DistributedOptimizer(self.optimizer, named_parameters=self.model.named_parameters())
+        if enable_hvd:
+            self.optimizer = hvd.DistributedOptimizer(self.optimizer, named_parameters=self.model.named_parameters())
 
-        for param in self.model.parameters():
-            param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
+        # for param in self.model.parameters():
+        #     param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
 
-        hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
-        hvd.broadcast_optimizer_state(self.optimizer, root_rank=0)
+        if enable_hvd:
+            hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
+            hvd.broadcast_optimizer_state(self.optimizer, root_rank=0)
 
         self.num_evaluation = 0
         self.num_tuple_so_far = 0
@@ -76,77 +98,65 @@ class ReferenceLearner:
     def save(self, name):
         self.model.save(name)
 
-    def learn(self, episodes: List[List[Episode]]) -> Tuple[List[MarginalTuple]]:
-        num_episode = 0
-        num_tuple = 0
-
-        loss_actor = 0.0
-        loss_critic = 0.0
-        # loss_muscle = 0.0
-        sum_return = 0.0
+    def learn(self, sample: Sample) -> List[MarginalTuple]:
+        advantages = np.zeros((sample.num_agents, sample.num_iters), dtype=np.float32)
 
         # Convert episodes into transitions
-        all_transitions: List[Transition] = []
-        for data in episodes:
-            size = len(data)
-            if size == 0:
-                continue
-            states, actions, rewards, values, logprobs = zip(*data)
+        last_advantage = 0
+        last_value = sample.values[:, -1]
 
-            values = np.concatenate((values, np.zeros(1)), axis=0)
-            advantages = np.zeros(size)
-            ad_t = 0
+        for t in reversed(range(sample.num_iters)):
+            mask = 1.0 - sample.dones[:, t]
+            last_value = last_value * mask
+            last_advantage = last_advantage * mask
+            delta = sample.rewards[:, t] + self.gamma * last_value - sample.values[:, t]
+            last_advantage = delta + self.gamma * self.lb * last_advantage
+            advantages[:, t] = last_advantage
+            last_value = sample.values[:, t]
 
-            epi_return = 0.0
-            for i in reversed(range(len(data))):
-                epi_return += rewards[i]
-                delta = rewards[i] + values[i + 1] * self.gamma - values[i]
-                ad_t = delta + self.gamma * self.lb * ad_t
-                advantages[i] = ad_t
-            sum_return += epi_return
-            TD = values[:size] + advantages
+        sum_return = np.sum(sample.rewards) / sample.num_agents
 
-            for i in range(size):
-                all_transitions.append(Transition(states[i], actions[i], logprobs[i], TD[i], advantages[i]))
-
-        num_episode = len(episodes)
-        num_tuple = len(all_transitions)
-        # print('SIM : {}'.format(num_tuple), flush=True)
-        self.num_tuple_so_far += num_tuple
+        td = sample.values[:, :-1] + advantages
 
         # Optimize actor and critic
         sum_loss_actor = 0.0
         sum_loss_critic = 0.0
 
-        iteration = 0
+        states_flat = flatten_buffer(sample.states)
+        actions_flat = flatten_buffer(sample.actions)
+        logprobs_flat = flatten_buffer(sample.logprobs)
+        td_flat = flatten_buffer(td)
+        gae_flat = flatten_buffer(advantages)
+
         for j in range(self.num_epochs):
+            indices = torch.randperm(sample.buffer_size)
+
             sum_loss_actor = 0.0
             sum_loss_critic = 0.0
-            np.random.shuffle(all_transitions)
-            for i in range(len(all_transitions) // self.batch_size):
-                iteration += 1
-                transitions = all_transitions[i * self.batch_size:(i + 1) * self.batch_size]
-                batch = Transition(*zip(*transitions))
 
-                stack_s = torch.from_numpy(np.vstack(batch.s).astype(np.float32)).to(self.device)
-                stack_a = torch.from_numpy(np.vstack(batch.a).astype(np.float32)).to(self.device)
-                stack_lp = torch.from_numpy(np.vstack(batch.logprob).astype(np.float32)).to(self.device)
-                stack_td = torch.from_numpy(np.vstack(batch.TD).astype(np.float32)).to(self.device)
-                stack_gae = torch.from_numpy(np.vstack(batch.GAE).astype(np.float32)).to(self.device)
+            for start in range(0, sample.buffer_size, self.minibatch_size):
+                end = start + self.minibatch_size
+                mb_idx = indices[start:end]
 
-                a_dist, v = self.model(stack_s)
+                s = torch.from_numpy(states_flat[mb_idx]).to(self.device)
+                a = torch.from_numpy(actions_flat[mb_idx]).to(self.device)
+                lp = torch.from_numpy(logprobs_flat[mb_idx]).to(self.device)
+                td = torch.from_numpy(td_flat[mb_idx]).to(self.device)
+                gae = torch.from_numpy(gae_flat[mb_idx]).to(self.device)
+
+                a_dist, v = self.model(s)
 
                 '''Critic Loss'''
-                loss_critic = ((v - stack_td).pow(2)).mean()
+                loss_critic = ((v - td).pow(2)).mean()
 
                 '''Actor Loss'''
-                ratio = torch.exp(a_dist.log_prob(stack_a) - stack_lp)
-                stack_gae = (stack_gae - stack_gae.mean()) / (stack_gae.std() + 1E-5)
-                surrogate1 = ratio * stack_gae
-                surrogate2 = torch.clamp(ratio, min=1.0 - self.clip_ratio, max=1.0 + self.clip_ratio) * stack_gae
-                loss_actor = - torch.min(surrogate1, surrogate2).mean()
+                ratio = torch.exp(a_dist.log_prob(a) - lp)
+                gae = (gae - gae.mean()) / (gae.std() + 1E-5)
+                surrogate1 = ratio * gae
+                surrogate2 = torch.clamp(ratio, min=1.0 - self.clip_ratio, max=1.0 + self.clip_ratio) * gae
+                loss_actor = -(torch.min(surrogate1, surrogate2).mean())
                 '''Entropy Loss'''
-                loss_entropy = - self.w_entropy * a_dist.entropy().mean()
+                loss_entropy = -(self.w_entropy * a_dist.entropy().mean())
 
                 loss = loss_actor + loss_entropy + loss_critic
 
@@ -156,14 +166,16 @@ class ReferenceLearner:
                 self.optimizer.zero_grad()
                 # loss.backward(retain_graph=True)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.5)
                 self.optimizer.step()
-
-            # print('Optimizing sim nn : {}/{}'.format(j+1,self.num_epochs),end='\r')
-        # print('')
-        print(f"ReferenceLearner iters: {iteration}")
 
         # Calculate stats
         self.num_evaluation = self.num_evaluation + 1
+        self.num_tuple_so_far += sample.buffer_size
+
+        num_episode = np.count_nonzero(sample.dones)
+        num_tuple = sample.buffer_size
+
         h = int((time.time() - self.tic)//3600.0)
         m = int((time.time() - self.tic)//60.0)
         s = int((time.time() - self.tic))
@@ -184,9 +196,6 @@ class ReferenceLearner:
             'loss_actor': sum_loss_actor,
             'loss_critic': sum_loss_critic,
             'noise': self.model.get_noise(),
-            'num_transitions_so_far': self.num_tuple_so_far,
-            'num_transitions': num_tuple,
-            'num_episode': num_episode,
             'avg_reward_per_episode': sum_return/num_episode,
             'avg_reward_per_transition': sum_return/num_tuple,
             'avg_step_per_episode': num_tuple/num_episode,
@@ -198,12 +207,12 @@ class ReferenceLearner:
         return [] # (s_b, V)
 
 class MuscleLearner:
-    def __init__(self, num_action, num_muscles, num_muscle_dofs):
+    def __init__(self, num_action, num_muscles, num_muscle_dofs, minibatch_size=128, enable_hvd=False):
         self.num_action = num_action
         self.num_muscles = num_muscles
 
         self.num_epochs_muscle = 3
-        self.muscle_batch_size = 128
+        self.minibatch_size = minibatch_size
         self.default_learning_rate = 1E-4
         self.learning_rate = self.default_learning_rate
 
@@ -212,13 +221,12 @@ class MuscleLearner:
         self.model = MuscleNN(num_muscle_dofs, self.num_action, self.num_muscles).to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        self.optimizer = hvd.DistributedOptimizer(self.optimizer, named_parameters=self.model.named_parameters())
+        if enable_hvd:
+            self.optimizer = hvd.DistributedOptimizer(self.optimizer, named_parameters=self.model.named_parameters())
 
-        for param in self.model.parameters():
-            param.register_hook(lambda grad: torch.clamp(grad, -0.5, 0.5))
-
-        hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
-        hvd.broadcast_optimizer_state(self.optimizer, root_rank=0)
+        if enable_hvd:
+            hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
+            hvd.broadcast_optimizer_state(self.optimizer, root_rank=0)
 
         self.stats = {}
 
@@ -232,21 +240,18 @@ class MuscleLearner:
         sum_loss = 0.0
         muscle_transitions = np.array(muscle_transitions)
 
-        iteration = 0
-
         for j in range(self.num_epochs_muscle):
             sum_loss = 0.0
             np.random.shuffle(muscle_transitions)
-            for i in range(len(muscle_transitions) // self.muscle_batch_size):
-                iteration += 1
-                tuples = muscle_transitions[i * self.muscle_batch_size:(i + 1) * self.muscle_batch_size]
+            for i in range(len(muscle_transitions) // self.minibatch_size):
+                tuples = muscle_transitions[i * self.minibatch_size:(i + 1) * self.minibatch_size]
                 batch = MuscleTransition(*zip(*tuples))
 
                 stack_JtA = torch.from_numpy(np.vstack(batch.JtA).astype(np.float32)).to(self.device)
 
                 stack_tau_des = torch.from_numpy(np.vstack(batch.tau_des).astype(np.float32)).to(self.device)
                 stack_L = torch.from_numpy(np.vstack(batch.L).astype(np.float32)).to(self.device)
-                stack_L = stack_L.reshape(self.muscle_batch_size, self.num_action, self.num_muscles)
+                stack_L = stack_L.reshape(self.minibatch_size, self.num_action, self.num_muscles)
 
                 # [ modify ] check
                 # stack_changed_m = np.vstack(batch.changed_m).astype(np.float32)
@@ -269,12 +274,12 @@ class MuscleLearner:
                 self.optimizer.zero_grad()
                 # loss.backward(retain_graph=True)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.5)
                 self.optimizer.step()
 
             # print('Optimizing muscle nn : {}/{}'.format(j+1,self.num_epochs_muscle),end='\r')
         # self.loss_muscle = loss.cpu().detach().numpy().tolist()
         # print('')
-        print(f"MuscleLearner iters: {iteration}")
 
         self.stats = {
             'loss_muscle': sum_loss
@@ -292,17 +297,16 @@ class BodyParamSampler:
         return np.zeros((agents_per_env,))
 
 class VectorEnv:
-    def __init__(self, meta_file: str, num_slaves: int, buffer_size: int = 2048):
+    def __init__(self, meta_file: str, num_agents: int, buffer_size: int = 2048):
         np.random.seed(seed=int(time.time()))
-        self.num_slaves = num_slaves
+        self.num_agents = num_agents
         self.buffer_size = buffer_size
-        self.env = EnvManager(meta_file, self.num_slaves)
+        self.env = EnvManager(meta_file, self.num_agents)
         self.use_muscle = self.env.UseMuscle()
         self.num_state = self.env.GetNumState()
         self.num_action = self.env.GetNumAction()
         self.num_muscles = self.env.GetNumMuscles()
         self.num_muscle_dofs = self.env.GetNumTotalMuscleRelatedDofs()
-        self.total_episodes = []
 
         self.counter = 0
 
@@ -316,6 +320,8 @@ class VectorEnv:
         self.num_control_Hz = self.env.GetControlHz()
         self.num_simulation_per_control = self.num_simulation_Hz // self.num_control_Hz
 
+        self.num_transitions_so_far = 0
+
         self.stats = {}
 
     def get_params(self) -> Dict:
@@ -328,7 +334,7 @@ class VectorEnv:
 
     def reset_with_new_body(self, body_params):
         # TODO: reset envs with the specified body parameters
-        for j in range(self.num_slaves):
+        for j in range(self.num_agents):
             self.env.Reset(True, j)
         return True
 
@@ -336,35 +342,24 @@ class VectorEnv:
         self.ref_model.load_state_dict(ref_model_weights)
         self.muscle_model.load_state_dict(muscle_model_weights)
 
-    def generate_tuples(self) -> Tuple[List[List[Episode]], List[MuscleTransition]]:
-        total_episodes: List[List[Episode]] = []
-        episodes = [[] for _ in range(self.num_slaves)]
-        states = [0.0] * self.num_slaves
-        actions = [0.0] * self.num_slaves
-        rewards = [0.0] * self.num_slaves
-        values = [0.0] * self.num_slaves
-        logprobs = [0.0] * self.num_slaves
-        states_next = [0.0] * self.num_slaves
-        terminated = [False] * self.num_slaves
+    def generate_tuples(self) -> Tuple[Sample, List[MuscleTransition]]:
+        sample = Sample(self.num_agents, self.buffer_size, self.num_state, self.num_action)
 
-        local_step = 0
-        while local_step < self.buffer_size:
-            self.counter += 1
-            if self.counter % 10 == 0:
-                pass
-                # print('SIM : {}'.format(local_step))
+        num_episodes = 0
 
-            states = self.env.GetStates()
-            a_dist, v = self.ref_model(torch.from_numpy(states).float().to(self.device))
-            actions = a_dist.sample()
-            logprobs = a_dist.log_prob(actions).cpu().detach().numpy().reshape(-1)
-            actions = actions.cpu().detach().numpy()
-            values = v.cpu().detach().numpy().reshape(-1)
+        for t in range(sample.num_iters):
+            s = self.env.GetStates()
+            a_dist, v = self.ref_model(torch.from_numpy(s).float().to(self.device))
+            a = a_dist.sample()
+            sample.states[:,t] = s
+            sample.logprobs[:,t] = a_dist.log_prob(a).cpu().detach().numpy().reshape(-1)
+            sample.actions[:,t] = a.cpu().detach().numpy()
+            sample.values[:,t] = v.cpu().detach().numpy().reshape(-1)
 
-            self.env.SetActions(actions)
+            self.env.SetActions(sample.actions[:,t])
             if self.use_muscle:
                 mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
-                for i in range(self.num_simulation_per_control // 2):
+                for _ in range(self.num_simulation_per_control // 2):
                     dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
                     activations = self.muscle_model(mt, dt).cpu().detach().numpy()
                     self.env.SetActivationLevels(activations)
@@ -372,35 +367,35 @@ class VectorEnv:
             else:
                 self.env.StepsAtOnce()
 
-            for j in range(self.num_slaves):
-                nan_occur = False
-                terminated_state = True
+            for j in range(sample.num_agents):
+                terminated_state = self.env.IsEndOfEpisode(j)
+                nan_occur = np.any(np.isnan(sample.states[j,t])) or np.any(np.isnan(sample.actions[j,t])) or \
+                            np.isnan(sample.values[j,t]) or np.isnan(sample.logprobs[j,t])
 
-                if np.any(np.isnan(states[j])) or np.any(np.isnan(actions[j])) or np.any(np.isnan(rewards[j])) \
-                        or np.any(np.isnan(values[j])) or np.any(np.isnan(logprobs[j])):
-                    nan_occur = True
-
-                elif self.env.IsEndOfEpisode(j) is False:
-                    terminated_state = False
-                    rewards[j] = self.env.GetReward(j)
-                    episodes[j].append(Episode(states[j], actions[j], rewards[j], values[j], logprobs[j]))
-                    local_step += 1
+                sample.rewards[j,t] = self.env.GetReward(j)
+                sample.dones[j,t] = terminated_state or nan_occur
 
                 if terminated_state or nan_occur:
-                    if nan_occur:
-                        del episodes[j][-1]
-                    total_episodes.append(episodes[j])
-                    episodes[j] = []
-
+                    num_episodes += 1
                     self.env.Reset(True, j)
 
-        muscle_data: List[MuscleTransition] = []
-        muscle_tuples = self.env.GetMuscleTuples()
-        for i in range(len(muscle_tuples)):
-            muscle_data.append(MuscleTransition(
-                muscle_tuples[i][0], muscle_tuples[i][1], muscle_tuples[i][2], muscle_tuples[i][3]))
+        # Gather the final values (Needed for GAE calculation)
+        s = self.env.GetStates()
+        _, v = self.ref_model(torch.from_numpy(s).float().to(self.device))
+        sample.values[:,-1] = v.cpu().detach().numpy().reshape(-1)
 
-        return total_episodes, muscle_data
+        muscle_tuples = self.env.GetMuscleTuples()
+        muscle_transitions = [MuscleTransition(*muscle_tuple) for muscle_tuple in muscle_tuples]
+
+        num_transitions = sample.buffer_size
+        self.num_transitions_so_far += num_transitions
+
+        self.stats = {
+            'num_episodes': num_episodes,
+            'num_transitions': num_transitions,
+            'num_transitions_so_far': self.num_transitions_so_far
+        }
+        return sample, muscle_transitions
 
 def plot_rewards(filename, y, title, num_fig=1, ylim=True):
     temp_y = np.zeros(y.shape)
@@ -423,6 +418,8 @@ def plot_rewards(filename, y, title, num_fig=1, ylim=True):
     if ylim:
         plt.ylim([0,1])
 
+    plt.pause(0.001)
+
     plt.savefig(filename)
 
 import argparse
@@ -434,11 +431,15 @@ import asyncio
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--local_rank', type=int)
+    parser.add_argument('--enable_hvd', help='Enable horovod', action='store_true')
+    parser.set_defaults(enable_hvd=False)
     parser.add_argument('-m', '--model', help='model path')
     parser.add_argument('-d', '--meta', help='meta file')
     # parser.add_argument('-r', '--rank', help='node rank')
     # parser.add_argument('-w', '--world-size', help='world size')
     parser.add_argument('-n', '--name', help='exp name', default='default')
+    parser.add_argument('-b', '--batch_size', help='batch size', type=int)
+    parser.add_argument('-a', '--num_agents', help='num agents', type=int)
 
     args = parser.parse_args()
     if args.meta is None:
@@ -451,19 +452,24 @@ if __name__ == "__main__":
     # os.environ['MASTER_ADDR'] = '10.1.20.1'
     # os.environ['MASTER_PORT'] = '29500'
 
-    hvd.init()
-    rank = hvd.rank()
-    world_size = hvd.size()
-    print(f'Initialized node with rank {rank}!', flush=True)
+    if args.enable_hvd:
+        hvd.init()
+        rank = hvd.rank()
+        world_size = hvd.size()
+        print(f'Initialized node with rank {rank}!', flush=True)
+    else:
+        rank = 0
+        world_size = 1
 
-    num_agents_per_env = 40
-    buffer_size = 2048 // world_size 
+    num_agents = args.num_agents
+    buffer_size = args.batch_size
 
-    env = VectorEnv(meta_file=args.meta, num_slaves=num_agents_per_env, buffer_size=buffer_size)
+    env = VectorEnv(meta_file=args.meta, num_agents=num_agents, buffer_size=buffer_size)
     env_params = env.get_params()
 
-    ref_learner = ReferenceLearner(env_params['num_state'], env_params['num_action'])
-    muscle_learner = MuscleLearner(env_params['num_action'], env_params['num_muscles'], env_params['num_muscle_dofs'])
+    ref_learner = ReferenceLearner(env_params['num_state'], env_params['num_action'], enable_hvd=args.enable_hvd)
+    muscle_learner = MuscleLearner(env_params['num_action'], env_params['num_muscles'], env_params['num_muscle_dofs'],
+                                   enable_hvd=args.enable_hvd)
     body_param_sampler = BodyParamSampler()
 
     Path('../plot').mkdir(exist_ok=True)
@@ -472,17 +478,19 @@ if __name__ == "__main__":
 
     rewards = []
 
+    plt.ion()
+
     while True:
-        body_params = body_param_sampler.sample(num_agents_per_env)
+        body_params = body_param_sampler.sample(num_agents)
         env.reset_with_new_body(body_params)
 
         start = time.time()
-        episodes, muscle_transitions = env.generate_tuples()
+        sample, muscle_transitions = env.generate_tuples()
         end = time.time()
         if rank == 0: print(f"Generating Tuples: {end - start}s")
 
         start = time.time()
-        marginal_tuples = ref_learner.learn(episodes)
+        marginal_tuples = ref_learner.learn(sample)
         end = time.time()
         if rank == 0: print(f"Ref learner: {end - start}s")
 
@@ -498,11 +506,11 @@ if __name__ == "__main__":
             print('||Loss Actor               : {:.4f}'.format(ref_learner.stats['loss_actor']))
             print('||Loss Critic              : {:.4f}'.format(ref_learner.stats['loss_critic']))
             print('||Loss Muscle              : {:.4f}'.format(muscle_learner.stats['loss_muscle']))
-            print('||Noise                    : {:.3f}'.format(ref_learner.stats['noise']))		
-            print('||Num Transition So far    : {}'    .format(ref_learner.stats['num_transitions_so_far']))
-            print('||Num Transition           : {}'    .format(ref_learner.stats['num_transitions']))
-            print('||Num Episode              : {}'    .format(ref_learner.stats['num_episode']))
-            print('||Avg Return per episode   : {:.3f}'.format(ref_learner.stats['avg_reward_per_episode']))
+            print('||Noise                    : {:.3f}'.format(ref_learner.stats['noise']))
+            print('||Num Transition So far    : {}'    .format(env.stats['num_transitions_so_far']))
+            print('||Num Transition           : {}'    .format(env.stats['num_transitions']))
+            print('||Num Episode              : {}'    .format(env.stats['num_episodes']))
+            print('||Avg Reward per episode   : {:.3f}'.format(ref_learner.stats['avg_reward_per_episode']))
             print('||Avg Reward per transition: {:.3f}'.format(ref_learner.stats['avg_reward_per_transition']))
             print('||Avg Step per episode     : {:.1f}'.format(ref_learner.stats['avg_step_per_episode']))
             print('||Max Avg Retun So far     : {:.3f} at #{}'.format(
