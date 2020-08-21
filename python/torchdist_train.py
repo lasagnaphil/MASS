@@ -428,6 +428,8 @@ def plot_rewards(filename, y, title, num_fig=1, ylim=True):
     if ylim:
         plt.ylim([0,1])
 
+    plt.pause(0.001)
+
     plt.savefig(filename)
 
 import argparse
@@ -476,7 +478,7 @@ if __name__ == "__main__":
         rank = torch.distributed.get_rank()
         print(f'Initialized node with rank {rank}!', flush=True)
 
-    num_agents_per_env = 40
+    num_agents_per_env = 32
     if args.run_single_node:
         buffer_size = 2048
     else:
@@ -495,6 +497,8 @@ if __name__ == "__main__":
     Path(f'../nn/{args.name}').mkdir(exist_ok=True)
 
     rewards = []
+
+    plt.ion()
 
     while True:
         body_params = body_param_sampler.sample(num_agents_per_env)

@@ -39,16 +39,13 @@ class Sample:
         self.rewards = np.zeros((num_agents, self.num_iters), dtype=np.float32)
         self.values = np.zeros((num_agents, self.num_iters + 1), dtype=np.float32)
         self.logprobs = np.zeros((num_agents, self.num_iters), dtype=np.float32)
-        self.dones = np.zeros((num_agents, self.num_iters), dtype=np.bool)
-
-def average_gradients(model):
-    size = float(dist.get_world_size())
-    for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        param.grad.data /= size
+        self.dones = np.zeros((num_agents, self.num_iters + 1), dtype=np.bool)
 
 def flatten_buffer(buffer: np.array):
-    return buffer.reshape(buffer.shape[0] * buffer.shape[1], *buffer.shape[2:])
+    if len(buffer.shape) > 2:
+        return buffer.reshape(buffer.shape[0] * buffer.shape[1], *buffer.shape[2:])
+    else:
+        return buffer.reshape(buffer.shape[0] * buffer.shape[1], 1)
 
 class ReferenceLearner:
     def __init__(self, num_state, num_action, minibatch_size=128, enable_hvd=False):
@@ -101,22 +98,35 @@ class ReferenceLearner:
     def learn(self, sample: Sample) -> List[MarginalTuple]:
         advantages = np.zeros((sample.num_agents, sample.num_iters), dtype=np.float32)
 
-        # Convert episodes into transitions
-        last_advantage = 0
-        last_value = sample.values[:, -1]
+        last_advantage = np.zeros((sample.num_agents, ), dtype=np.float32)
+        # last_value = np.zeros((sample.num_agents, ), dtype=np.float32)
+        # last_value = sample.values[:, -1]
 
         for t in reversed(range(sample.num_iters)):
             mask = 1.0 - sample.dones[:, t]
-            last_value = last_value * mask
-            last_advantage = last_advantage * mask
-            delta = sample.rewards[:, t] + self.gamma * last_value - sample.values[:, t]
-            last_advantage = delta + self.gamma * self.lb * last_advantage
+            delta = sample.rewards[:, t] + self.gamma * sample.values[:, t+1] * mask - sample.values[:, t]
+            last_advantage = delta + self.gamma * self.lb * last_advantage * mask
             advantages[:, t] = last_advantage
-            last_value = sample.values[:, t]
-
-        sum_return = np.sum(sample.rewards) / sample.num_agents
 
         td = sample.values[:, :-1] + advantages
+
+        episode_return = []
+        episode_steps = []
+        for i in range(sample.num_agents):
+            total_rewards = np.zeros((sample.num_agents, ), dtype=np.float32)
+            total_steps = np.zeros((sample.num_agents, ), dtype=np.float32)
+            for t in range(sample.num_iters):
+                total_steps[i] += 1
+                total_rewards[i] += sample.rewards[i, t]
+                if sample.dones[i, t]:
+                    episode_return.append(total_rewards[i])
+                    episode_steps.append(total_steps[i])
+                    total_rewards[i] = 0
+                    total_steps[i] = 0
+
+        avg_reward_per_episode = sum(episode_return) / len(episode_return)
+        avg_reward_per_transition = sum(episode_return) / sum(episode_steps)
+        avg_step_per_episode = sum(episode_steps) / len(episode_steps)
 
         # Optimize actor and critic
         sum_loss_actor = 0.0
@@ -147,16 +157,17 @@ class ReferenceLearner:
                 a_dist, v = self.model(s)
 
                 '''Critic Loss'''
-                loss_critic = ((v - td).pow(2)).mean()
+                loss_critic = (v - td).pow(2).mean()
 
                 '''Actor Loss'''
                 ratio = torch.exp(a_dist.log_prob(a) - lp)
                 gae = (gae - gae.mean()) / (gae.std() + 1E-5)
                 surrogate1 = ratio * gae
                 surrogate2 = torch.clamp(ratio, min=1.0 - self.clip_ratio, max=1.0 + self.clip_ratio) * gae
-                loss_actor = -(torch.min(surrogate1, surrogate2).mean())
+                loss_actor = -torch.min(surrogate1, surrogate2).mean()
+
                 '''Entropy Loss'''
-                loss_entropy = -(self.w_entropy * a_dist.entropy().mean())
+                loss_entropy = -self.w_entropy * a_dist.entropy().mean()
 
                 loss = loss_actor + loss_entropy + loss_critic
 
@@ -166,7 +177,7 @@ class ReferenceLearner:
                 self.optimizer.zero_grad()
                 # loss.backward(retain_graph=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                 self.optimizer.step()
 
         # Calculate stats
@@ -186,8 +197,8 @@ class ReferenceLearner:
             num_episode = 1
         if num_tuple == 0:
             num_tuple = 1
-        if self.max_return < sum_return/num_episode:
-            self.max_return = sum_return/num_episode
+        if self.max_return < avg_reward_per_episode:
+            self.max_return = avg_reward_per_episode
             self.max_return_epoch = self.num_evaluation
 
         self.stats = {
@@ -196,9 +207,9 @@ class ReferenceLearner:
             'loss_actor': sum_loss_actor,
             'loss_critic': sum_loss_critic,
             'noise': self.model.get_noise(),
-            'avg_reward_per_episode': sum_return/num_episode,
-            'avg_reward_per_transition': sum_return/num_tuple,
-            'avg_step_per_episode': num_tuple/num_episode,
+            'avg_reward_per_episode': avg_reward_per_episode,
+            'avg_reward_per_transition': avg_reward_per_transition,
+            'avg_step_per_episode': avg_step_per_episode,
             'max_avg_return_so_far': self.max_return,
             'max_avg_return_so_far_epoch': self.max_return_epoch
         }
@@ -274,7 +285,7 @@ class MuscleLearner:
                 self.optimizer.zero_grad()
                 # loss.backward(retain_graph=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                 self.optimizer.step()
 
             # print('Optimizing muscle nn : {}/{}'.format(j+1,self.num_epochs_muscle),end='\r')
@@ -383,6 +394,11 @@ class VectorEnv:
         s = self.env.GetStates()
         _, v = self.ref_model(torch.from_numpy(s).float().to(self.device))
         sample.values[:,-1] = v.cpu().detach().numpy().reshape(-1)
+        for j in range(sample.num_agents):
+            terminated_state = self.env.IsEndOfEpisode(j)
+            nan_occur = np.any(np.isnan(sample.states[j,t])) or np.any(np.isnan(sample.actions[j,t])) or \
+                        np.isnan(sample.values[j,t]) or np.isnan(sample.logprobs[j,t])
+            sample.dones[j,-1] = terminated_state or nan_occur
 
         muscle_tuples = self.env.GetMuscleTuples()
         muscle_transitions = [MuscleTransition(*muscle_tuple) for muscle_tuple in muscle_tuples]
