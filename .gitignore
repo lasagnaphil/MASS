@@ -2,6 +2,7 @@ build/
 *.so
 *.a
 nn/
+nn_ray/
 
 cmake-build-*/
 **/__pycache__/
@@ -9,3 +10,4 @@ cmake-build-*/
 
 logs/
 plot/
+ray_result/
