@@ -34,23 +34,20 @@ config={
         "num_agents": 32,
     },
 
-    "num_workers": 1,
-
-    "model": {
-        "custom_model": "my_model",
-        "custom_model_config": {},
-        "max_seq_len": 0    # Placeholder value needed for ray to register model
-    },
-
-    # "fcnet_activation": nn.LeakyReLU,
-    # "fcnet_hiddens": [256, 256],
-    # "vf_share_layers": False,
+    "num_workers": 0,
 
     "framework": "torch",
+    "model": {
+        "fcnet_activation": "relu", # TODO: use LeakyReLU?
+        "fcnet_hiddens": [256, 256],
+        "vf_share_layers": False,
+    },
 }
 
 class Evaluator:
     def __init__(self, state_dim: int, action_dim: int, checkpoint_path: str):
+        ray.init()
+
         self.config = config.copy()
         self.config["env_config"]["state_dim"] = state_dim
         self.config["env_config"]["action_dim"] = action_dim
@@ -59,3 +56,6 @@ class Evaluator:
 
     def get_action(self, obs):
         return self.agent.compute_action(obs)
+
+    def shutdown(self):
+        ray.shutdown()

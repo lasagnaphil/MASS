@@ -27,49 +27,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--without_tune', help='use this in pycharm', action='store_true')
 parser.add_argument("--gpu", action="store_true")
 
-class MyEnv(gym.Env):
-    def __init__(self, config, obs_space, action_space, env: EnvManager, agent_index: int):
-        self.config = config
-        self.observation_space = obs_space
-        self.action_space = action_space
-        self.env = env
-        self.agent_index = agent_index
-
-        self.use_muscle = self.env.UseMuscle()
-        self.num_state = self.env.GetNumState()
-        self.num_action = self.env.GetNumAction()
-        self.num_muscles = self.env.GetNumMuscles()
-        self.num_muscle_dofs = self.env.GetNumTotalMuscleRelatedDofs()
-
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        self.num_simulation_Hz = self.env.GetSimulationHz()
-        self.num_control_Hz = self.env.GetControlHz()
-        self.num_simulation_per_control = self.num_simulation_Hz // self.num_control_Hz
-
-    def reset(self):
-        self.env.Reset(True, self.agent_index)
-        return self.env.GetState(self.agent_index)
-
-    def step(self, action):
-        self.env.SetAction(action, self.agent_index)
-        if self.use_muscle:
-            mt = torch.from_numpy(self.env.GetMuscleTorques()[self.agent_index]).to(self.device)
-            for _ in range(self.num_simulation_per_control // 2):
-                dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
-                activations = self.muscle_model(mt, dt).cpu().detach().numpy()
-                self.env.SetActivationLevels(activations)
-                self.env.Steps(2)
-        else:
-            self.env.StepsAtOnce()
-
-        obs = self.env.GetStates()
-        rewards = self.env.GetRewards()
-        dones = self.env.IsEndOfEpisodes()
-        info = {}
-
-        return obs, rewards, dones, info
-
 class MyVectorEnv(VectorEnv):
     def __init__(self, config):
         obs_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(130,))
@@ -161,21 +118,6 @@ class SimulationNN_Ray(SimulationNN, TorchModelV2):
     def value_function(self):
         return self._last_value.squeeze(1)
 
-from ray.rllib.agents.ppo.ppo import execution_plan
-
-def train_ppo(config, reporter):
-    # Setup policy and policy evaluation actors
-    mass_dir = config["env_config"]["mass_home"]
-
-    trainer = PPOTrainer(env=MyVectorEnv, config=config)
-    for i in range(10000):
-        result = trainer.train()
-        print(pretty_print(result))
-
-        if i % 50 == 0:
-            checkpoint = trainer.save()
-            print("Checkpoint saved at ", checkpoint)
-
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -187,6 +129,7 @@ if __name__ == "__main__":
     Path('../nn_ray').mkdir(exist_ok=True)
 
     config={
+        "env": MyVectorEnv,
         "env_config": {
             "mass_home": "/home/lasagnaphil/dev/MASS",
             "meta_file": "data/metadata.txt",
@@ -196,18 +139,18 @@ if __name__ == "__main__":
         "num_workers": 1,
         "framework": "torch",
 
-        "model": {
-            "custom_model": "my_model",
-            "custom_model_config": {},
-            "max_seq_len": 0    # Placeholder value needed for ray to register model
-        },
-
-
         # "model": {
-        #     "fcnet_activation": nn.LeakyReLU,
-        #     "fcnet_hiddens": [256, 256],
-        #     "vf_share_layers": False,
+        #     "custom_model": "my_model",
+        #     "custom_model_config": {},
+        #     "max_seq_len": 0    # Placeholder value needed for ray to register model
         # },
+
+
+        "model": {
+            "fcnet_activation": "relu", # TODO: use LeakyReLU?
+            "fcnet_hiddens": [256, 256],
+            "vf_share_layers": False,
+        },
 
         "use_critic": True,
         "use_gae": True,
@@ -236,7 +179,10 @@ if __name__ == "__main__":
     if args.without_tune:
         train_ppo(config, lambda *args, **kwargs: None)
     else:
-        tune.run(train_ppo,
+        tune.run("PPO",
                  config=config,
                  local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                 checkpoint_freq=50,
                  checkpoint_at_end=True)
+
+    ray.shutdown()

@@ -33,11 +33,11 @@ Window(Environment* env)
 	mm = py::module::import("__main__");
 	mns = mm.attr("__dict__");
 	sys_module = py::module::import("sys");
-	
+
 	py::str module_dir = (std::string(MASS_ROOT_DIR)+"/python").c_str();
 	sys_module.attr("path").attr("insert")(1, module_dir);
 
-	py::eval_file(std::string(MASS_ROOT_DIR) + "/python/ray_load.py", mns);
+    load_module = py::module::import("ray_load");
 	/*
 	py::exec("import torch",mns);
 	py::exec("import torch.nn as nn",mns);
@@ -59,7 +59,7 @@ Window(Environment* env,const std::string& nn_path)
 	str = ("num_action = "+std::to_string(mEnv->GetNumAction())).c_str();
 	py::exec(str,mns);
 
-	nn_module = mns.attr("Evaluator")(mEnv->GetNumState(), mEnv->GetNumAction(), nn_path);
+	nn_module = load_module.attr("Evaluator")(mEnv->GetNumState(), mEnv->GetNumAction(), nn_path);
 	// nn_module = py::eval("SimulationNN(num_state,num_action)",mns);
 
 	// py::object load = nn_module.attr("load");
@@ -83,6 +83,12 @@ Window(Environment* env,const std::string& nn_path,const std::string& muscle_nn_
 	py::object load = muscle_nn_module.attr("load");
 	load(muscle_nn_path);
 }
+
+Window::~Window()
+{
+    nn_module.attr("shutdown")();
+}
+
 void
 Window::
 draw()
