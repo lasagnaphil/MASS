@@ -26,7 +26,10 @@ redis_password=$(uuidgen)
 
 export ip_head # Exporting for latter access by trainer.py
 
-srun --nodes=1 --ntasks=1 -w $node1 $RAY_EXEC start --block --head --redis-port=6379 --redis-password=$redis_password & # Starting the head
+# Starting the head
+srun --nodes=1 --ntasks=1 -w $node1 $RAY_EXEC start --block --head --redis-port=6379 --redis-password=$redis_password \
+    --include-webui=true --webui-host=0.0.0.0 &
+    
 sleep 5
 # Make sure the head successfully starts before any worker does, otherwise
 # the worker will not be able to connect to redis. In case of longer delay,
@@ -41,5 +44,5 @@ done
 
 sleep 5
 
-$PYTHON_EXEC -u python/ray_train.py --redis_password $redis_password
+$PYTHON_EXEC -u python/ray_train.py --cluster --redis_password $redis_password
 

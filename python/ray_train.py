@@ -217,45 +217,55 @@ class MuscleLearner:
             'loss_muscle': sum_loss
         }
 
-def with_worker_env(worker, callable):
-    return ray.get(worker.apply.remote(
+def with_worker_env(worker, callable, block=False):
+    res = worker.apply.remote(
         lambda worker: callable(worker.async_env.vector_env)
-    ))
+    )
+    if block:
+        return ray.get(res)
+    else:
+        return res
 
 def train_ppo(config, reporter):
     trainer = PPOTrainer(config=config, env=MyVectorEnv)
 
     local_env = trainer.workers.local_worker().env
 
-    muscle_learner = MuscleLearner(local_env.num_action, local_env.num_muscles, local_env.num_muscle_dofs,
-                                   run_distributed=False, use_ddp=False)
+    RemoteMuscleLearner = ray.remote(MuscleLearner)
+    muscle_learner = RemoteMuscleLearner.options(num_cpus=40).remote(
+            local_env.num_action, local_env.num_muscles, local_env.num_muscle_dofs,
+            run_distributed=False, use_ddp=False)
 
     mass_home = config["env_config"]["mass_home"]
 
-    for i in range(0, 10000):
+    for i in range(1, 10001):
         result = trainer.train()
         reporter(**result)
 
         remote_worker = trainer.workers.remote_workers()[0]
         muscle_tuples = with_worker_env(remote_worker, lambda env: env.get_muscle_tuples())
 
-        # muscle_tuples = ray.get(
-        #     [w.apply.remote(worker_get_muscle_tuple) for w in trainer.workers.remote_workers()])
+        ray.get(muscle_learner.learn.remote(muscle_tuples))
 
-        muscle_learner.learn(muscle_tuples)
-        with_worker_env(remote_worker, lambda env: env.load_muscle_model_weights(
-            muscle_learner.get_model_weights()))
+        def sync_muscle_weights(env):
+            model_weights = ray.get(muscle_learner.get_model_weights.remote())
+            env.load_muscle_model_weights(model_weights)
+
+        with_worker_env(remote_worker, sync_muscle_weights, block=True)
 
         if i % 50 == 0:
             checkpoint = trainer.save()
 
             model = trainer.get_policy().model
 
-            model.save(f"{mass_home}/nn/{i}.pt")
-            muscle_learner.save(f"{mass_home}/nn/{i}_muscle.pt")
+            model.save(f"{mass_home}/nn_ray/{i}.pt")
+            ray.get(muscle_learner.save.remote(f"{mass_home}/nn_ray/{i}_muscle.pt"))
 
 
 from pathlib import Path
+
+def select(cond, v1, v2):
+    return v1 if cond else v2
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -274,7 +284,7 @@ if __name__ == "__main__":
         env_config = {
             "mass_home": os.environ["PWD"],
             "meta_file": "data/metadata.txt",
-            "num_envs": 40,
+            "num_envs": 16,
         }
     else:
         env_config = {
@@ -332,8 +342,6 @@ if __name__ == "__main__":
     else:
         tune.run(train_ppo,
                  config=config,
-                 local_dir=config["env_config"]["mass_home"] + "/ray_result",
-                 checkpoint_freq=50,
-                 checkpoint_at_end=True)
+                 local_dir=config["env_config"]["mass_home"] + "/ray_result")
 
     ray.shutdown()
