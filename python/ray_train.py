@@ -19,15 +19,19 @@ from ray.rllib.utils.framework import try_import_torch
 
 torch, nn = try_import_torch()
 
-from python.pymss import EnvManager
-from python.Model import *
+from pymss import EnvManager
+from Model import *
 
 from typing import Dict, List, Callable
 from collections import namedtuple
 
+import os
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--without_tune', help='use this in pycharm', action='store_true')
 parser.add_argument("--gpu", action="store_true")
+parser.add_argument("--redis_password", type=str)
+parser.add_argument("--cluster", action='store_true')
 
 MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
 
@@ -255,19 +259,33 @@ from pathlib import Path
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    ray.init(num_cpus=16, num_gpus=1)
+    if args.cluster:
+        ray.init(address=os.environ["ip_head"], redis_password=args.redis_password)
+        print("Nodes in the Ray cluster:")
+        print(ray.nodes())
+    else:
+        ray.init(num_cpus=16, num_gpus=1)
 
     ModelCatalog.register_custom_model("my_model", SimulationNN_Ray)
 
-    Path('../nn_ray').mkdir(exist_ok=True)
+    Path('nn_ray').mkdir(exist_ok=True)
 
-    config={
-        "env": MyVectorEnv,
-        "env_config": {
+    if args.cluster:
+        env_config = {
+            "mass_home": os.environ["PWD"],
+            "meta_file": "data/metadata.txt",
+            "num_envs": 40,
+        }
+    else:
+        env_config = {
             "mass_home": "/home/lasagnaphil/dev/MASS-ray",
             "meta_file": "data/metadata.txt",
             "num_envs": 16,
-        },
+        }
+
+    config={
+        "env": MyVectorEnv,
+        "env_config": env_config,
 
         "num_workers": 1,
         "framework": "torch",
