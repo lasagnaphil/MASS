@@ -9,6 +9,10 @@
 PYTHON_EXEC=/home/lasagnaphil/.conda/envs/mass/bin/python 
 RAY_EXEC=/home/lasagnaphil/.conda/envs/mass/bin/ray
 
+export OMP_NUM_THREADS=20
+export MKL_NUM_THREADS=20
+export KMP_AFFINITY=granularity=fine,compact,1,0
+
 worker_num=1 # Must be one less that the total number of nodes
 
 # module load Langs/Python/3.6.4 # This will vary depending on your environment

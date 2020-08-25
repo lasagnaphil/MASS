@@ -299,6 +299,7 @@ if __name__ == "__main__":
 
         "num_workers": 1,
         "framework": "torch",
+        "num_cpus_per_worker": env_config["num_envs"],
 
         "model": {
             "custom_model": "my_model",
@@ -319,7 +320,7 @@ if __name__ == "__main__":
         "gamma": 0.99,
         "kl_coeff": 0.2,
         "rollout_fragment_length": 128,
-        "train_batch_size": 2048,
+        "train_batch_size": env_config["num_envs"] * 128,
         "sgd_minibatch_size": 128,
         "shuffle_sequences": True,
         "num_sgd_iter": 10,
