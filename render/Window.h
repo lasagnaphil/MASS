@@ -16,7 +16,6 @@ public:
 	Window(Environment* env);
 	Window(Environment* env,const std::string& nn_path);
 	Window(Environment* env,const std::string& nn_path,const std::string& muscle_nn_path);
-	~Window();
 
 	void draw() override;
 	void keyboard(unsigned char _key, int _x, int _y) override;
@@ -40,7 +39,6 @@ private:
 	Eigen::VectorXd GetActionFromNN();
 	Eigen::VectorXd GetActivationFromNN(const Eigen::VectorXd& mt);
 
-	pybind11::object load_module;
 	pybind11::object mm,mns,sys_module,nn_module,muscle_nn_module;
 
     Environment* mEnv;
