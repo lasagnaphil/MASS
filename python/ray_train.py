@@ -232,7 +232,7 @@ def train_ppo(config, reporter):
     local_env = trainer.workers.local_worker().env
 
     RemoteMuscleLearner = ray.remote(MuscleLearner)
-    muscle_learner = RemoteMuscleLearner.options(num_cpus=40).remote(
+    muscle_learner = RemoteMuscleLearner.options(num_cpus=1).remote(
             local_env.num_action, local_env.num_muscles, local_env.num_muscle_dofs,
             run_distributed=False, use_ddp=False)
 
@@ -297,7 +297,7 @@ if __name__ == "__main__":
         "env": MyVectorEnv,
         "env_config": env_config,
 
-        "num_workers": 1,
+        "num_workers": 2,
         "framework": "torch",
         "num_cpus_per_worker": env_config["num_envs"],
 
@@ -306,13 +306,6 @@ if __name__ == "__main__":
             "custom_model_config": {},
             "max_seq_len": 0    # Placeholder value needed for ray to register model
         },
-
-
-        # "model": {
-        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
-        #     "fcnet_hiddens": [256, 256],
-        #     "vf_share_layers": False,
-        # },
 
         "use_critic": True,
         "use_gae": True,
@@ -336,13 +329,63 @@ if __name__ == "__main__":
         "batch_mode": "truncate_episodes",
         "observation_filter": "NoFilter",
         "simple_optimizer": False,
+
+        # DDPPO-specific settings
+        "num_gpus_per_worker": 0
     }
 
+    impala_config = {
+        "env": MyVectorEnv,
+        "env_config": env_config,
+
+        "framework": "torch",
+        "num_cpus_per_worker": env_config["num_envs"],
+
+        "model": {
+            "custom_model": "my_model",
+            "custom_model_config": {},
+            "max_seq_len": 0    # Placeholder value needed for ray to register model
+        },
+
+        # "model": {
+        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
+        #     "fcnet_hiddens": [256, 256],
+        #     "vf_share_layers": False,
+        # },
+
+        "use_critic": True,
+        "use_gae": True,
+        "lambda": 0.99,
+        "gamma": 0.99,
+        "clip_param": 0.2,
+        "kl_coeff": 0.2,
+        "rollout_fragment_length": 128,
+        "train_batch_size": env_config["num_envs"] * 128,
+        "min_iter_time_s": 10,
+        "num_data_loader_buffers": 1,
+        "minibatch_buffer_size": 1,
+        "num_sgd_iter": 10,
+        "replay_proportion": 0.0,
+        "replay_buffer_num_slots": 100,
+        "learner_queue_size": 16,
+        "learner_queue_timeout": 300,
+        "max_sample_requests_in_flight_per_worker": 2,
+        "broadcast_interval": 1,
+        "grad_clip": 40.0,
+        "opt_type": "adam",
+        "lr": 0.0001,
+        "lr_schedule": None,
+        "vf_loss_coeff": 1.0,
+        "entropy_coeff": 0.0,
+        "entropy_coeff_schedule": None,
+    }
+
+
     if args.without_tune:
-        train_ppo(config, lambda *args, **kwargs: None)
+        train_ppo(impala_config, lambda *args, **kwargs: None)
     else:
-        tune.run("PPO",
-                 config=config,
+        tune.run("APPO",
+                 config=impala_config,
                  local_dir=config["env_config"]["mass_home"] + "/ray_result")
 
     ray.shutdown()
