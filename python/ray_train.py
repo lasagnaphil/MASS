@@ -82,8 +82,8 @@ class MyVectorEnv(VectorEnv):
     def vector_step(self, actions):
         self.env.SetActions(actions)
         if self.use_muscle:
+            mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
             for _ in range(self.num_simulation_per_control // 2):
-                mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
                 dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
                 activations = self.muscle_model(mt, dt).cpu().detach().numpy()
                 self.env.SetActivationLevels(activations)
@@ -230,7 +230,7 @@ def train_ppo(config, reporter):
     local_env = trainer.workers.local_worker().env
 
     RemoteMuscleLearner = ray.remote(MuscleLearner)
-    muscle_learner = RemoteMuscleLearner.options(num_cpus=40).remote(
+    muscle_learner = RemoteMuscleLearner.remote(
             local_env.num_action, local_env.num_muscles, local_env.num_muscle_dofs,
             run_distributed=False, use_ddp=False)
 
