@@ -37,21 +37,20 @@ MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
 
 class MyVectorEnv(VectorEnv):
     def __init__(self, config):
-        obs_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(130,))
-        action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(50,))
-        super(MyVectorEnv, self).__init__(obs_space, action_space, config["num_envs"])
-
-        self.config = config
-
         self.meta_file = config["mass_home"] + "/" + config["meta_file"]
-
-        self.env = EnvManager(self.meta_file, self.num_envs)
+        self.env = EnvManager(self.meta_file, config["num_envs"])
 
         self.use_muscle = self.env.UseMuscle()
         self.num_state = self.env.GetNumState()
         self.num_action = self.env.GetNumAction()
         self.num_muscles = self.env.GetNumMuscles()
         self.num_muscle_dofs = self.env.GetNumTotalMuscleRelatedDofs()
+
+        obs_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_state,))
+        action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_action,))
+        super(MyVectorEnv, self).__init__(obs_space, action_space, config["num_envs"])
+
+        self.config = config
 
         self.counter = 0
 
