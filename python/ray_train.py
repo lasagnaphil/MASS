@@ -58,7 +58,6 @@ class MyVectorEnv(VectorEnv):
 
         self.muscle_model = MuscleNN(self.num_muscle_dofs, self.num_action, self.num_muscles).to(
             self.device)
-        self.muscle_tuples = []
 
         self.num_simulation_Hz = self.env.GetSimulationHz()
         self.num_control_Hz = self.env.GetControlHz()
@@ -83,8 +82,8 @@ class MyVectorEnv(VectorEnv):
     def vector_step(self, actions):
         self.env.SetActions(actions)
         if self.use_muscle:
-            mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
             for _ in range(self.num_simulation_per_control // 2):
+                mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
                 dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
                 activations = self.muscle_model(mt, dt).cpu().detach().numpy()
                 self.env.SetActivationLevels(activations)
