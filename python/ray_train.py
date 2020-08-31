@@ -19,7 +19,7 @@ from ray.rllib.utils.framework import try_import_torch
 
 torch, nn = try_import_torch()
 
-from pymss import EnvManager
+from pymss import EnvManager, SingleEnvManager
 from Model import *
 
 from typing import Dict, List, Callable
@@ -34,6 +34,66 @@ parser.add_argument("--redis_password", type=str)
 parser.add_argument("--cluster", action='store_true')
 
 MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
+
+class MyEnv(gym.Env):
+    def __init__(self, config):
+        self.meta_file = config["mass_home"] + "/" + config["meta_file"]
+        self.env = SingleEnvManager(self.meta_file)
+
+        self.use_muscle = self.env.UseMuscle()
+        self.num_state = self.env.GetNumState()
+        self.num_action = self.env.GetNumAction()
+        self.num_muscles = self.env.GetNumMuscles()
+        self.num_muscle_dofs = self.env.GetNumTotalMuscleRelatedDofs()
+
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_state,))
+        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_action,))
+
+        self.config = config
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        self.muscle_model = MuscleNN(self.num_muscle_dofs, self.num_action, self.num_muscles).to(
+            self.device)
+
+        self.num_simulation_Hz = self.env.GetSimulationHz()
+        self.num_control_Hz = self.env.GetControlHz()
+        self.num_simulation_per_control = self.num_simulation_Hz // self.num_control_Hz
+
+        self.counter = 0
+        self.num_transitions_so_far = 0
+        self.stats = {}
+
+    def reset(self):
+        self.env.Reset(True)
+        return self.env.GetState()
+
+    def step(self, action):
+        self.env.SetAction(action)
+        if self.use_muscle:
+            mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
+            for _ in range(self.num_simulation_per_control // 2):
+                dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
+                activations = self.muscle_model(mt, dt).cpu().detach().numpy()
+                self.env.SetActivationLevels(activations)
+                self.env.Steps(2)
+        else:
+            self.env.StepsAtOnce()
+
+        self.counter += 1
+
+        obs = self.env.GetState()
+        reward = self.env.GetReward()
+        done = self.env.IsEndOfEpisode() or np.isnan(reward)
+        info = {}
+
+        return obs, reward, done, info
+
+    def load_muscle_model_weights(self, weights):
+        self.muscle_model.load_state_dict(weights)
+
+    def get_muscle_tuples(self):
+        muscle_tuples = self.env.GetMuscleTuples()
+        return [MuscleTransition(t[0], t[1], t[2], t[3]) for t in muscle_tuples]
 
 class MyVectorEnv(VectorEnv):
     def __init__(self, config):
@@ -117,7 +177,10 @@ class SimulationNN_Ray(SimulationNN, TorchModelV2):
     def __init__(self, obs_space: gym.Space, action_space: gym.Space, config: Dict, *args, **kwargs):
         num_states = np.prod(obs_space.shape)
         num_actions = np.prod(action_space.shape)
-        super(SimulationNN_Ray, self).__init__(num_states, num_actions)
+        SimulationNN.__init__(self, num_states, num_actions)
+
+        num_outputs = 2 * np.prod(action_space.shape)
+        TorchModelV2.__init__(self, obs_space, action_space, num_outputs, {}, "SimulationNN_Ray")
         self._last_value = None
 
     @override(TorchModelV2)
@@ -125,7 +188,8 @@ class SimulationNN_Ray(SimulationNN, TorchModelV2):
         obs = input_dict["obs"].float()
         x = obs.reshape(obs.shape[0], -1)
         action_dist, self._last_value = super(SimulationNN_Ray, self).forward(x)
-        return torch.cat([action_dist.loc, action_dist.scale], dim=1), state
+        action_tensor = torch.cat([action_dist.loc, action_dist.scale], dim=1)
+        return action_tensor, state
 
     @override(TorchModelV2)
     def value_function(self):
@@ -272,7 +336,7 @@ if __name__ == "__main__":
         print("Nodes in the Ray cluster:")
         print(ray.nodes())
     else:
-        ray.init(num_cpus=16, num_gpus=1)
+        ray.init(num_cpus=32, num_gpus=1)
 
     ModelCatalog.register_custom_model("my_model", SimulationNN_Ray)
 
@@ -281,30 +345,29 @@ if __name__ == "__main__":
     if args.cluster:
         env_config = {
             "mass_home": os.environ["PWD"],
-            "meta_file": "data/metadata.txt",
-            "num_envs": 16,
+            "meta_file": "data/metadata_nomuscle.txt",
+            # "num_envs": 16,
         }
     else:
         env_config = {
             "mass_home": "/home/lasagnaphil/dev/MASS-ray",
-            "meta_file": "data/metadata.txt",
-            "num_envs": 16,
+            "meta_file": "data/metadata_nomuscle.txt",
+            # "num_envs": 16,
         }
 
     config={
-        "env": MyVectorEnv,
+        "env": MyEnv,
         "env_config": env_config,
 
-        "num_workers": 1,
+        "num_workers": 16,
         "framework": "torch",
-        "num_cpus_per_worker": env_config["num_envs"],
+        # "num_cpus_per_worker": env_config["num_envs"],
 
         "model": {
             "custom_model": "my_model",
             "custom_model_config": {},
             "max_seq_len": 0    # Placeholder value needed for ray to register model
         },
-
 
         # "model": {
         #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
@@ -318,7 +381,7 @@ if __name__ == "__main__":
         "gamma": 0.99,
         "kl_coeff": 0.2,
         "rollout_fragment_length": 128,
-        "train_batch_size": env_config["num_envs"] * 128,
+        "train_batch_size": 16 * 128,
         "sgd_minibatch_size": 128,
         "shuffle_sequences": True,
         "num_sgd_iter": 10,
@@ -339,7 +402,7 @@ if __name__ == "__main__":
     if args.without_tune:
         train_ppo(config, lambda *args, **kwargs: None)
     else:
-        tune.run(train_ppo,
+        tune.run("PPO",
                  config=config,
                  local_dir=config["env_config"]["mass_home"] + "/ray_result")
 
