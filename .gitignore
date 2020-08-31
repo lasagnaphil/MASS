@@ -2,7 +2,7 @@ build/
 *.so
 *.a
 nn/
-nn_ray/
+nn_*/
 
 cmake-build-*/
 **/__pycache__/
