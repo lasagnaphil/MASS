@@ -32,6 +32,7 @@ parser.add_argument('--without_tune', help='use this in pycharm', action='store_
 parser.add_argument("--gpu", action="store_true")
 parser.add_argument("--redis_password", type=str)
 parser.add_argument("--cluster", action='store_true')
+parser.add_argument("--algorithm", type=str, default="ppo")
 
 MuscleTransition = namedtuple('MuscleTransition', ('JtA', 'tau_des', 'L', 'b'))
 
@@ -399,11 +400,95 @@ if __name__ == "__main__":
         "simple_optimizer": False,
     }
 
+    impala_config = {
+        "env": MyEnv,
+        "env_config": env_config,
+
+        "num_workers": 16,
+        "framework": "torch",
+
+        "model": {
+            "custom_model": "my_model",
+            "custom_model_config": {},
+            "max_seq_len": 0    # Placeholder value needed for ray to register model
+        },
+
+        # "model": {
+        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
+        #     "fcnet_hiddens": [256, 256],
+        #     "vf_share_layers": False,
+        # },
+
+        # "use_critic": True,
+        # "use_gae": True,
+        # "lambda": 0.99,
+        "gamma": 0.99,
+        # "clip_param": 0.2,
+        # "kl_coeff": 0.2,
+        "rollout_fragment_length": 128,
+        "train_batch_size": 512,
+        "min_iter_time_s": 10,
+        "num_data_loader_buffers": 1,
+        "minibatch_buffer_size": 1,
+        "num_sgd_iter": 10,
+        "replay_proportion": 0.0,
+        "replay_buffer_num_slots": 100,
+        "learner_queue_size": 16,
+        "learner_queue_timeout": 300,
+        "max_sample_requests_in_flight_per_worker": 2,
+        "broadcast_interval": 1,
+        "grad_clip": 40.0,
+        "opt_type": "adam",
+        "lr": 0.0001,
+        "lr_schedule": None,
+        "vf_loss_coeff": 1.0,
+        "entropy_coeff": 0.0,
+        "entropy_coeff_schedule": None,
+    }
+
+    ars_config = {
+        "env": MyEnv,
+        "env_config": env_config,
+
+        "framework": "torch",
+
+        "model": {
+            "custom_model": "my_model",
+            "custom_model_config": {},
+            "max_seq_len": 0
+        },
+
+        "action_noise_std": 0.0,
+        "noise_stdev": 0.0075,  # std deviation of parameter noise
+        "num_rollouts": 256,  # number of perturbs to try
+        "rollouts_used": 128,  # number of perturbs to keep in gradient estimate
+        "num_workers": 16,
+        "sgd_stepsize": 0.01,  # sgd step-size
+        "observation_filter": "MeanStdFilter",
+        "noise_size": 250000000,
+        "eval_prob": 0.03,  # probability of evaluating the parameter rewards
+        "report_length": 10,  # how many of the last rewards we average over
+        "offset": 0,
+    }
+
     if args.without_tune:
-        train_ppo(config, lambda *args, **kwargs: None)
+        if args.algorithm == "ppo":
+            train_ppo(config, lambda *args, **kwargs: None)
+        else:
+            raise RuntimeError(f"{args.algorithm} not supported")
     else:
-        tune.run("PPO",
-                 config=config,
-                 local_dir=config["env_config"]["mass_home"] + "/ray_result")
+        if args.algorithm == "ppo":
+            tune.run("PPO",
+                     config=config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result")
+        elif args.algorithm == "impala":
+            tune.run("IMPALA",
+                     config=impala_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result")
+        elif args.algorithm == "ars":
+            tune.run("ARS",
+                     config=ars_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result")
+
 
     ray.shutdown()
