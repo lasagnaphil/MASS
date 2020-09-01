@@ -383,21 +383,21 @@ if __name__ == "__main__":
         "env": MyEnv,
         "env_config": env_config,
 
-        "num_workers": 16,
-        "framework": "torch",
+        "num_workers": 32,
+        "framework": "tf",
         # "num_cpus_per_worker": env_config["num_envs"],
 
-        "model": {
-            "custom_model": "my_model",
-            "custom_model_config": {},
-            "max_seq_len": 0    # Placeholder value needed for ray to register model
-        },
-
         # "model": {
-        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
-        #     "fcnet_hiddens": [256, 256],
-        #     "vf_share_layers": False,
+        #     "custom_model": "my_model",
+        #     "custom_model_config": {},
+        #     "max_seq_len": 0    # Placeholder value needed for ray to register model
         # },
+
+        "model": {
+            "fcnet_activation": "relu", # TODO: use LeakyReLU?
+            "fcnet_hiddens": [256, 256],
+            "vf_share_layers": False,
+        },
 
         "use_critic": True,
         "use_gae": True,
@@ -405,7 +405,7 @@ if __name__ == "__main__":
         "gamma": 0.99,
         "kl_coeff": 0.2,
         "rollout_fragment_length": 128,
-        "train_batch_size": 16 * 128,
+        "train_batch_size": 32 * 128,
         "sgd_minibatch_size": 128,
         "shuffle_sequences": True,
         "num_sgd_iter": 10,
@@ -427,20 +427,21 @@ if __name__ == "__main__":
         "env": MyEnv,
         "env_config": env_config,
 
-        "num_workers": 16,
-        "framework": "torch",
-
-        "model": {
-            "custom_model": "my_model",
-            "custom_model_config": {},
-            "max_seq_len": 0    # Placeholder value needed for ray to register model
-        },
+        "num_workers": 32,
+        "num_gpus": 0,
+        "framework": "tf",
 
         # "model": {
-        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
-        #     "fcnet_hiddens": [256, 256],
-        #     "vf_share_layers": False,
+        #     "custom_model": "my_model",
+        #     "custom_model_config": {},
+        #     "max_seq_len": 0    # Placeholder value needed for ray to register model
         # },
+
+        "model": {
+            "fcnet_activation": "relu", # TODO: use LeakyReLU?
+            "fcnet_hiddens": [256, 256],
+            "vf_share_layers": False,
+        },
 
         # "use_critic": True,
         # "use_gae": True,
@@ -461,13 +462,68 @@ if __name__ == "__main__":
         "max_sample_requests_in_flight_per_worker": 2,
         "broadcast_interval": 1,
         "grad_clip": 40.0,
-        "opt_type": "adam",
-        "lr": 0.0001,
+        "opt_type": "rmsprop",
+        "lr": tune.loguniform(5e-6, 5e-3),
         "lr_schedule": None,
-        "vf_loss_coeff": 1.0,
-        "entropy_coeff": 0.0,
+        "decay": 0.99,
+        "momentum": 0.0,
+        "epsilon": tune.grid_search([1e-1, 1e-3, 1e-5, 1e-7]),
+        "vf_loss_coeff": 0.5,
+        "entropy_coeff": tune.loguniform(5e-5, 1e-2),
         "entropy_coeff_schedule": None,
     }
+
+    appo_config = {
+        "env": MyEnv,
+        "env_config": env_config,
+
+        "num_workers": 32,
+        "num_gpus": 0,
+        "framework": "tf",
+
+        # "model": {
+        #     "custom_model": "my_model",
+        #     "custom_model_config": {},
+        #     "max_seq_len": 0    # Placeholder value needed for ray to register model
+        # },
+
+        "model": {
+            "fcnet_activation": "relu", # TODO: use LeakyReLU?
+            "fcnet_hiddens": [256, 256],
+            "vf_share_layers": False,
+        },
+
+        "use_critic": True,
+        "use_gae": True,
+        "lambda": 0.99,
+        "gamma": 0.99,
+        "clip_param": 0.2,
+        "kl_coeff": 0.2,
+        "rollout_fragment_length": 128,
+        "train_batch_size": 512,
+        "min_iter_time_s": 10,
+        "num_data_loader_buffers": 1,
+        "minibatch_buffer_size": 1,
+        "num_sgd_iter": 10,
+        "replay_proportion": 0.0,
+        "replay_buffer_num_slots": 100,
+        "learner_queue_size": 16,
+        "learner_queue_timeout": 300,
+        "max_sample_requests_in_flight_per_worker": 2,
+        "broadcast_interval": 1,
+        "grad_clip": 40.0,
+        "opt_type": "rmsprop",
+        "lr": 0.0001,
+        "lr_schedule": None,
+        "decay": 0.99,
+        "momentum": 0.0,
+        "epsilon": tune.grid_search([1e-1, 1e-3, 1e-5, 1e-7]),
+        "vf_loss_coeff": 0.5,
+        "entropy_coeff": tune.loguniform(5e-5, 1e-2),
+        "entropy_coeff_schedule": None,
+    }
+
+
 
     ars_config = {
         "env": MyEnv,
@@ -482,11 +538,11 @@ if __name__ == "__main__":
         },
 
         "action_noise_std": 0.0,
-        "noise_stdev": tune.grid_search([0.01, 0.0075, 0.005]),  # std deviation of parameter noise
-        "num_rollouts": tune.grid_search([180, 270, 360, 450]),  # number of perturbs to try
-        "rollouts_used": tune.grid_search([90, 180, 270]),  # number of perturbs to keep in gradient estimate
-        "num_workers": 30,
-        "sgd_stepsize": tune.grid_search([0.01, 0.02, 0.025]),  # sgd step-size
+        "noise_stdev": 0.005,  # std deviation of parameter noise
+        "num_rollouts": 450,  # number of perturbs to try
+        "rollouts_used": 270,  # number of perturbs to keep in gradient estimate
+        "num_workers": 500,
+        "sgd_stepsize": 0.025,  # sgd step-size
         "observation_filter": "MeanStdFilter",
         "noise_size": 250000000,
         "eval_prob": 0.03,  # probability of evaluating the parameter rewards
@@ -509,8 +565,18 @@ if __name__ == "__main__":
                      config=impala_config,
                      local_dir=config["env_config"]["mass_home"] + "/ray_result",
                      stop=stop_cond)
+        elif args.algorithm == "appo":
+            tune.run("APPO",
+                     config=appo_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
         elif args.algorithm == "ars":
             tune.run("ARS",
+                     config=ars_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
+        elif args.algorithm == "experiment":
+            tune.run(tune.grid_search(["IMPALA", "APPO"]),
                      config=ars_config,
                      local_dir=config["env_config"]["mass_home"] + "/ray_result",
                      stop=stop_cond)
