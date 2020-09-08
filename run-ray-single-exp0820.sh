@@ -27,5 +27,5 @@ srun --nodes=1 --ntasks=1 -w $node1 $RAY_EXEC start --block --head --redis-port=
     
 sleep 5
 
-$PYTHON_EXEC -u python/ray_train.py --cluster --redis_password $redis_password
+$PYTHON_EXEC -u python/ray_train.py --cluster --redis_password $redis_password --config=ppo-4-32
 

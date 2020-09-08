@@ -571,7 +571,8 @@ if __name__ == "__main__":
     CONFIG = importlib.import_module(args.config_file).CONFIG
     config = CONFIG[args.config]
 
-    stop_cond = {"training_iteration": config["num_iters"]}
+    # stop_cond = {"training_iteration": config["num_iters"]}
+    stop_cond = {"episode_reward_mean": 1000}
 
     if args.without_tune:
        train(config, lambda *args, **kwargs: None)

@@ -10,6 +10,7 @@ cmake -DMASS_BUILD_RENDERER=OFF \
       -DCMAKE_INSTALL_PREFIX=/home/$USER/pkgenv \
       -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE \
       -DCMAKE_INSTALL_RPATH=/home/$USER/pkgenv \
+      ..
 
 make -j$(nproc)
 popd

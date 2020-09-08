@@ -51,8 +51,8 @@ CONFIG["ppo"].update({
 
     "num_workers": 16,
     "num_cpus_per_worker": 1,
-    "num_cpus_for_driver": 16,
-    "num_gpus": 1,
+    "num_cpus_for_driver": 8,
+    # "num_gpus": 1,
 
     "use_critic": True,
     "use_gae": True,
@@ -77,6 +77,16 @@ CONFIG["ppo"].update({
     "observation_filter": "NoFilter",
     "simple_optimizer": False,
 })
+
+for num_workers in (4, 8, 16, 32):
+    for frag_len in (32, 64, 128, 256):
+        new_config = CONFIG["ppo"].copy()
+        new_config.update({
+            "num_workers": num_workers,
+            "rollout_fragment_length": frag_len,
+            "train_batch_size": num_workers * frag_len
+        })
+        CONFIG[f"ppo-{num_workers}-{frag_len}"] = new_config
 
 CONFIG["ddppo"] = CONFIG["ppo"].copy()
 CONFIG["ddppo"].update({
