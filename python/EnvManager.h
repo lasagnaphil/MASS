@@ -18,6 +18,7 @@ public:
 	int GetControlHz();
 	int GetNumSteps();
 	bool UseMuscle();
+    bool UseAdaptiveSampling() {return false;}
 
 	void Step(int id);
 	void Reset(bool RSI,int id);

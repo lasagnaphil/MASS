@@ -7,11 +7,13 @@ num_physical_cores = psutil.cpu_count(logical=False)
 num_logical_cores = psutil.cpu_count(logical=True)
 num_cpus_for_driver = 8
 
+CONFIG = {}
+
 common_config = {
     "env": "MyEnv",
     "env_config": {
         "mass_home": os.environ["PWD"],
-        "meta_file": "data/metadata_nomuscle.txt",
+        "meta_file": "data/metadata.txt",
         "use_multi_env": False,
         "num_envs": 1,
     },
@@ -28,31 +30,37 @@ common_config = {
         "KMP_AFFINITY": "granularity=fine,compact,1,0"
     },
 
+    "model": {
+        "custom_model": "my_model",
+        "custom_model_config": {},
+        "max_seq_len": 0    # Placeholder value needed for ray to register model
+    },
+
     # "model": {
-    #     "custom_model": "my_model",
-    #     "custom_model_config": {},
-    #     "max_seq_len": 0    # Placeholder value needed for ray to register model
+    #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
+    #     "fcnet_hiddens": [256, 256],
+    #     "vf_share_layers": False,
     # },
 
-    "model": {
-        "fcnet_activation": "relu", # TODO: use LeakyReLU?
-        "fcnet_hiddens": [256, 256],
-        "vf_share_layers": False,
-    },
+    "num_iters": 10000,
 }
 
-ppo_config = common_config.update({
-    "num_workers": 128,
+CONFIG["ppo"] = common_config.copy()
+CONFIG["ppo"].update({
+    "algorithm": "PPO",
+
+    "num_workers": 16,
     "num_cpus_per_worker": 1,
-    "num_cpus_for_driver": 8,
+    "num_cpus_for_driver": 16,
+    "num_gpus": 1,
 
     "use_critic": True,
     "use_gae": True,
     "lambda": 0.99,
     "gamma": 0.99,
     "kl_coeff": 0.2,
-    "rollout_fragment_length": 64, # tune.grid_search([128, 256, 512]),
-    "train_batch_size": 128*32,# tune.grid_search([128*32, 256*32, 512*32]),
+    "rollout_fragment_length": 128,
+    "train_batch_size": 2048,
     "sgd_minibatch_size": 128,
     "shuffle_sequences": True,
     "num_sgd_iter": 10,
@@ -70,14 +78,20 @@ ppo_config = common_config.update({
     "simple_optimizer": False,
 })
 
-ddppo_config = ppo_config.update({
+CONFIG["ddppo"] = CONFIG["ppo"].copy()
+CONFIG["ddppo"].update({
+    "algorithm": "DDPPO",
+
     "num_workers": 4,
     "num_envs_per_worker": 8,
     "num_cpus_per_worker": 8,
 })
-del ddppo_config["train_batch_size"]
+CONFIG["ddppo"].pop("train_batch_size")
 
-impala_config = common_config.update({
+CONFIG["impala"] = common_config.copy()
+CONFIG["impala"].update({
+    "algorithm": "IMPALA",
+
     "framework": "tf",
 
     "num_workers": 32,
@@ -113,7 +127,10 @@ impala_config = common_config.update({
     "entropy_coeff_schedule": None,
 })
 
-appo_config = impala_config.update({
+CONFIG["appo"] = CONFIG["impala"].copy()
+CONFIG["appo"].update({
+    "algorithm": "APPO",
+
     "num_workers": 160,
     "num_gpus": 0,
 
@@ -124,7 +141,10 @@ appo_config = impala_config.update({
     "kl_coeff": 0.2,
 })
 
-ars_config = common_config.update({
+CONFIG["ars"] = common_config.copy()
+CONFIG["ars"].update({
+    "algorithm": "ARS",
+
     "action_noise_std": 0.0,
     "noise_stdev": 0.005,  # std deviation of parameter noise
     "num_rollouts": 450,  # number of perturbs to try
@@ -137,3 +157,5 @@ ars_config = common_config.update({
     "report_length": 10,  # how many of the last rewards we average over
     "offset": 0,
 })
+
+CONFIG["default"] = CONFIG["ppo"].copy()

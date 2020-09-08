@@ -69,7 +69,7 @@ class MuscleNN(nn.Module):
         muscle_tau = muscle_tau/self.std_muscle_tau
 
         tau = tau/self.std_tau
-        out = self.fc.forward(torch.cat([muscle_tau, tau], dim=1))
+        out = self.fc.forward(torch.cat([muscle_tau, tau], dim=-1))
         return out
 
     def load(self, path):
@@ -153,3 +153,41 @@ class SimulationNN(nn.Module):
     def get_noise(self):
         return self.log_std.exp().mean().item()
 
+class MarginalNN(nn.Module):
+    def __init__(self, num_states):
+        super(MarginalNN, self).__init__()
+
+        num_h1 = 256
+        num_h2 = 256
+
+        self.v_fc1 = nn.Linear(num_states, num_h1)
+        self.v_fc2 = nn.Linear(num_h1, num_h2)
+        self.v_fc3 = nn.Linear(num_h2, 1)
+
+        torch.nn.init.xavier_uniform_(self.v_fc1.weight)
+        torch.nn.init.xavier_uniform_(self.v_fc2.weight)
+        torch.nn.init.xavier_uniform_(self.v_fc3.weight)
+
+        self.v_fc1.bias.data.zero_()
+        self.v_fc2.bias.data.zero_()
+        self.v_fc3.bias.data.zero_()
+
+    def forward(self, x):
+        v_out = F.relu(self.v_fc1(x))
+        v_out = F.relu(self.v_fc2(v_out))
+        v_out = self.v_fc3(v_out)
+
+        return v_out
+
+    def load(self,path):
+        print('load marginal nn {}'.format(path))
+        self.load_state_dict(torch.load(path))
+
+    def save(self,path):
+        print('save marginal nn {}'.format(path))
+        torch.save(self.state_dict(), path)
+
+    def get_value(self, s):
+        ts = torch.tensor(s)
+        v = self.forward(ts)
+        return v.cpu().detach().numpy()

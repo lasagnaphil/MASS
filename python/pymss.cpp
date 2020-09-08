@@ -3,7 +3,10 @@
 //
 
 #include "SingleEnvManager.h"
+
+#ifdef COMPILE_MULTI_ENV_MANAGER
 #include "EnvManager.h"
+#endif
 
 PYBIND11_MODULE(pymss, m) {
     py::class_<SingleEnvManager>(m, "SingleEnvManager")
@@ -14,6 +17,7 @@ PYBIND11_MODULE(pymss, m) {
             .def("GetControlHz", &SingleEnvManager::GetControlHz)
             .def("GetNumSteps", &SingleEnvManager::GetNumSteps)
             .def("UseMuscle", &SingleEnvManager::UseMuscle)
+            .def("UseAdaptiveSampling", &SingleEnvManager::UseAdaptiveSampling)
             .def("Step", &SingleEnvManager::Step)
             .def("Reset", &SingleEnvManager::Reset)
             .def("IsEndOfEpisode", &SingleEnvManager::IsEndOfEpisode)
@@ -29,7 +33,8 @@ PYBIND11_MODULE(pymss, m) {
             .def("SetActivationLevels", &SingleEnvManager::SetActivationLevels)
             .def("GetMuscleTuples", &SingleEnvManager::GetMuscleTuples);
 
-    py::class_<EnvManager>(m, "EnvManager")
+#ifdef COMPILE_MULTI_ENV_MANAGER
+    py::class_<EnvManager>(m, "MultiEnvManager")
             .def(py::init<std::string,int>())
             .def("GetNumState",&EnvManager::GetNumState)
             .def("GetNumAction",&EnvManager::GetNumAction)
@@ -37,6 +42,7 @@ PYBIND11_MODULE(pymss, m) {
             .def("GetControlHz",&EnvManager::GetControlHz)
             .def("GetNumSteps",&EnvManager::GetNumSteps)
             .def("UseMuscle",&EnvManager::UseMuscle)
+            .def("UseAdaptiveSampling",&EnvManager::UseAdaptiveSampling)
             .def("Step",&EnvManager::Step)
             .def("Reset",&EnvManager::Reset)
             .def("IsEndOfEpisode",&EnvManager::IsEndOfEpisode)
@@ -56,4 +62,5 @@ PYBIND11_MODULE(pymss, m) {
             .def("GetDesiredTorques",&EnvManager::GetDesiredTorques)
             .def("SetActivationLevels",&EnvManager::SetActivationLevels)
             .def("GetMuscleTuples",&EnvManager::GetMuscleTuples);
+#endif
 }
