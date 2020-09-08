@@ -1,12 +1,11 @@
 import os
 from ray import tune
 
-env_config = {
-    "mass_home": os.environ["PWD"],
-    "meta_file": "data/metadata_nomuscle.txt",
-    "use_multi_env": False,
-    "num_envs": 32,
-}
+import psutil
+
+num_physical_cores = psutil.cpu_count(logical=False)
+num_logical_cores = psutil.cpu_count(logical=True)
+num_cpus_for_driver = 8
 
 common_config = {
     "env": "MyEnv",
@@ -14,18 +13,18 @@ common_config = {
         "mass_home": os.environ["PWD"],
         "meta_file": "data/metadata_nomuscle.txt",
         "use_multi_env": False,
-        "num_envs": 32,
+        "num_envs": 1,
     },
 
     "framework": "torch",
     "extra_python_environs_for_driver": {
-        "OMP_NUM_THREADS": "20",
-        "MKL_NUM_THREADS": "20",
+        "OMP_NUM_THREADS": num_physical_cores,
+        "MKL_NUM_THREADS": num_physical_cores,
         "KMP_AFFINITY": "granularity=fine,compact,1,0"
     },
     "extra_python_environs_for_worker": {
-        "OMP_NUM_THREADS": "20",
-        "MKL_NUM_THREADS": "20",
+        "OMP_NUM_THREADS": num_physical_cores,
+        "MKL_NUM_THREADS": num_physical_cores,
         "KMP_AFFINITY": "granularity=fine,compact,1,0"
     },
 
