@@ -9,6 +9,8 @@ from ray.rllib.evaluation import RolloutWorker
 from ray.rllib.evaluation.metrics import collect_metrics
 from ray.rllib.agents.trainer import with_common_config
 from ray.rllib.agents.ppo import PPOTorchPolicy, PPOTrainer
+from ray.rllib.agents.impala import ImpalaTrainer
+from ray.rllib.agents.ars import ARSTorchPolicy, ARSTrainer
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.env.vector_env import VectorEnv
 from ray.rllib.env.base_env import BaseEnv
@@ -16,6 +18,7 @@ from ray.rllib.utils.annotations import override
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.models import ModelCatalog
 from ray.rllib.utils.framework import try_import_torch
+from ray.tune.registry import register_env
 
 torch, nn = try_import_torch()
 
@@ -289,8 +292,26 @@ def with_worker_env(worker, callable, block=False):
     else:
         return res
 
+def with_multiple_worker_env(workers, callable, block=False):
+    res = [worker.apply.remote(
+        lambda worker: callable(worker.async_env.vector_env)
+    ) for worker in workers]
+    if block:
+        return ray.get(res)
+    else:
+        return res
+
 def train_ppo(config, reporter):
-    trainer = PPOTrainer(config=config, env=MyVectorEnv)
+    Env = MyVectorEnv if config["env_config"]["use_multi_env"] else MyEnv
+
+    if args.algorithm == "ppo":
+        trainer = PPOTrainer(config=config, env=Env)
+    elif args.algorithm == "impala":
+        trainer = ImpalaTrainer(config=config, env=Env)
+    elif args.algorithm == "ars":
+        trainer = ARSTrainer(config=config, env=Env)
+    else:
+        raise RuntimeError(f"{args.algorithm} not supported")
 
     local_env = trainer.workers.local_worker().env
 
@@ -305,27 +326,29 @@ def train_ppo(config, reporter):
         result = trainer.train()
         reporter(**result)
 
-        remote_worker = trainer.workers.remote_workers()[0]
-        muscle_tuples = with_worker_env(remote_worker, lambda env: env.get_muscle_tuples())
+        if local_env.use_muscle:
+            remote_workers = trainer.workers.remote_workers()
+            muscle_tuples = with_multiple_worker_env(remote_workers, lambda env: env.get_muscle_tuples())
 
-        ray.get(muscle_learner.learn.remote(muscle_tuples))
+            ray.get(muscle_learner.learn.remote(muscle_tuples))
 
-        def sync_muscle_weights(env):
-            model_weights = ray.get(muscle_learner.get_model_weights.remote())
-            env.load_muscle_model_weights(model_weights)
+            def sync_muscle_weights(env):
+                model_weights = ray.get(muscle_learner.get_model_weights.remote())
+                env.load_muscle_model_weights(model_weights)
 
-        with_worker_env(remote_worker, sync_muscle_weights, block=True)
+            with_worker_env(remote_workers, sync_muscle_weights, block=True)
 
         if i % 50 == 0:
             checkpoint = trainer.save()
 
             model = trainer.get_policy().model
-
             model.save(f"{mass_home}/nn_ray/{i}.pt")
-            ray.get(muscle_learner.save.remote(f"{mass_home}/nn_ray/{i}_muscle.pt"))
 
+            if local_env.use_muscle:
+                ray.get(muscle_learner.save.remote(f"{mass_home}/nn_ray/{i}_muscle.pt"))
 
 from pathlib import Path
+import ray_config
 
 def select(cond, v1, v2):
     return v1 if cond else v2
@@ -340,155 +363,43 @@ if __name__ == "__main__":
         ray.init(num_cpus=32, num_gpus=1)
 
     ModelCatalog.register_custom_model("my_model", SimulationNN_Ray)
+    register_env("MyEnv", MyEnv)
+    register_env("MyVectorEnv", MyVectorEnv)
 
     Path('nn_ray').mkdir(exist_ok=True)
 
-    if args.cluster:
-        env_config = {
-            "mass_home": os.environ["PWD"],
-            "meta_file": "data/metadata_nomuscle.txt",
-            # "num_envs": 16,
-        }
-    else:
-        env_config = {
-            "mass_home": "/home/lasagnaphil/dev/MASS-ray",
-            "meta_file": "data/metadata_nomuscle.txt",
-            # "num_envs": 16,
-        }
-
-    config={
-        "env": MyEnv,
-        "env_config": env_config,
-
-        "num_workers": 16,
-        "framework": "torch",
-        # "num_cpus_per_worker": env_config["num_envs"],
-
-        "model": {
-            "custom_model": "my_model",
-            "custom_model_config": {},
-            "max_seq_len": 0    # Placeholder value needed for ray to register model
-        },
-
-        # "model": {
-        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
-        #     "fcnet_hiddens": [256, 256],
-        #     "vf_share_layers": False,
-        # },
-
-        "use_critic": True,
-        "use_gae": True,
-        "lambda": 0.99,
-        "gamma": 0.99,
-        "kl_coeff": 0.2,
-        "rollout_fragment_length": 128,
-        "train_batch_size": 16 * 128,
-        "sgd_minibatch_size": 128,
-        "shuffle_sequences": True,
-        "num_sgd_iter": 10,
-        "lr": 1e-4,
-        "lr_schedule": None,
-        "vf_loss_coeff": 1.0,
-        "entropy_coeff": 0.0,
-        "entropy_coeff_schedule": None,
-        "clip_param": 0.2,
-        "vf_clip_param": 10.0,
-        "grad_clip": None,
-        "kl_target": 0.01,
-        "batch_mode": "truncate_episodes",
-        "observation_filter": "NoFilter",
-        "simple_optimizer": False,
-    }
-
-    impala_config = {
-        "env": MyEnv,
-        "env_config": env_config,
-
-        "num_workers": 16,
-        "framework": "torch",
-
-        "model": {
-            "custom_model": "my_model",
-            "custom_model_config": {},
-            "max_seq_len": 0    # Placeholder value needed for ray to register model
-        },
-
-        # "model": {
-        #     "fcnet_activation": "relu", # TODO: use LeakyReLU?
-        #     "fcnet_hiddens": [256, 256],
-        #     "vf_share_layers": False,
-        # },
-
-        # "use_critic": True,
-        # "use_gae": True,
-        # "lambda": 0.99,
-        "gamma": 0.99,
-        # "clip_param": 0.2,
-        # "kl_coeff": 0.2,
-        "rollout_fragment_length": 128,
-        "train_batch_size": 512,
-        "min_iter_time_s": 10,
-        "num_data_loader_buffers": 1,
-        "minibatch_buffer_size": 1,
-        "num_sgd_iter": 10,
-        "replay_proportion": 0.0,
-        "replay_buffer_num_slots": 100,
-        "learner_queue_size": 16,
-        "learner_queue_timeout": 300,
-        "max_sample_requests_in_flight_per_worker": 2,
-        "broadcast_interval": 1,
-        "grad_clip": 40.0,
-        "opt_type": "adam",
-        "lr": 0.0001,
-        "lr_schedule": None,
-        "vf_loss_coeff": 1.0,
-        "entropy_coeff": 0.0,
-        "entropy_coeff_schedule": None,
-    }
-
-    ars_config = {
-        "env": MyEnv,
-        "env_config": env_config,
-
-        "framework": "torch",
-
-        "model": {
-            "custom_model": "my_model",
-            "custom_model_config": {},
-            "max_seq_len": 0
-        },
-
-        "action_noise_std": 0.0,
-        "noise_stdev": 0.0075,  # std deviation of parameter noise
-        "num_rollouts": 256,  # number of perturbs to try
-        "rollouts_used": 128,  # number of perturbs to keep in gradient estimate
-        "num_workers": 16,
-        "sgd_stepsize": 0.01,  # sgd step-size
-        "observation_filter": "MeanStdFilter",
-        "noise_size": 250000000,
-        "eval_prob": 0.03,  # probability of evaluating the parameter rewards
-        "report_length": 10,  # how many of the last rewards we average over
-        "offset": 0,
-    }
+    stop_cond = {"training_iteration": 10000}
 
     if args.without_tune:
-        if args.algorithm == "ppo":
-            train_ppo(config, lambda *args, **kwargs: None)
-        else:
-            raise RuntimeError(f"{args.algorithm} not supported")
+        train_ppo(config, lambda *args, **kwargs: None)
     else:
         if args.algorithm == "ppo":
             tune.run("PPO",
-                     config=config,
-                     local_dir=config["env_config"]["mass_home"] + "/ray_result")
+                     config=ray_config.ppo_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
+        elif args.algorithm == "ddppo":
+            tune.run("DDPPO",
+                     config=ray_config.ddppo_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
         elif args.algorithm == "impala":
             tune.run("IMPALA",
-                     config=impala_config,
-                     local_dir=config["env_config"]["mass_home"] + "/ray_result")
+                     config=ray_config.impala_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
+        elif args.algorithm == "appo":
+            tune.run("APPO",
+                     config=ray_config.appo_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
         elif args.algorithm == "ars":
             tune.run("ARS",
-                     config=ars_config,
-                     local_dir=config["env_config"]["mass_home"] + "/ray_result")
+                     config=ray_config.ars_config,
+                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
+                     stop=stop_cond)
+        else:
+            raise RuntimeError(f"{args.algorithm} not supported")
 
 
     ray.shutdown()
