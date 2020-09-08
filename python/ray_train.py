@@ -369,22 +369,35 @@ if __name__ == "__main__":
             "mass_home": os.environ["PWD"],
             "meta_file": "data/metadata_nomuscle.txt",
             "use_multi_env": False,
-            # "num_envs": 16,
+            "num_envs": 32,
         }
     else:
         env_config = {
             "mass_home": "/home/lasagnaphil/dev/MASS-ray",
             "meta_file": "data/metadata_nomuscle.txt",
-            "use_multi_env": False
-            # "num_envs": 16,
+            "use_multi_env": False,
+            "num_envs": 32,
         }
 
     config={
         "env": MyEnv,
         "env_config": env_config,
 
-        "num_workers": 32,
-        "framework": "tf",
+        "num_workers": 128,
+        "num_cpus_per_worker": 1,
+        "num_cpus_for_driver": 8,
+        "framework": "torch",
+        "extra_python_environs_for_driver": {
+            "OMP_NUM_THREADS": "20",
+            "MKL_NUM_THREADS": "20",
+            "KMP_AFFINITY": "granularity=fine,compact,1,0"
+        },
+        "extra_python_environs_for_worker": {
+            "OMP_NUM_THREADS": "20",
+            "MKL_NUM_THREADS": "20",
+            "KMP_AFFINITY": "granularity=fine,compact,1,0"
+        },
+
         # "num_cpus_per_worker": env_config["num_envs"],
 
         # "model": {
@@ -404,8 +417,8 @@ if __name__ == "__main__":
         "lambda": 0.99,
         "gamma": 0.99,
         "kl_coeff": 0.2,
-        "rollout_fragment_length": 128,
-        "train_batch_size": 32 * 128,
+        "rollout_fragment_length": 64, # tune.grid_search([128, 256, 512]),
+        "train_batch_size": 128*32,# tune.grid_search([128*32, 256*32, 512*32]),
         "sgd_minibatch_size": 128,
         "shuffle_sequences": True,
         "num_sgd_iter": 10,
@@ -477,7 +490,7 @@ if __name__ == "__main__":
         "env": MyEnv,
         "env_config": env_config,
 
-        "num_workers": 32,
+        "num_workers": 160,
         "num_gpus": 0,
         "framework": "tf",
 
@@ -507,7 +520,7 @@ if __name__ == "__main__":
         "num_sgd_iter": 10,
         "replay_proportion": 0.0,
         "replay_buffer_num_slots": 100,
-        "learner_queue_size": 16,
+        "learner_queue_size": 4,
         "learner_queue_timeout": 300,
         "max_sample_requests_in_flight_per_worker": 2,
         "broadcast_interval": 1,
@@ -517,13 +530,11 @@ if __name__ == "__main__":
         "lr_schedule": None,
         "decay": 0.99,
         "momentum": 0.0,
-        "epsilon": tune.grid_search([1e-1, 1e-3, 1e-5, 1e-7]),
+        "epsilon": 0.1, # tune.grid_search([1e-1, 1e-3, 1e-5, 1e-7]),
         "vf_loss_coeff": 0.5,
-        "entropy_coeff": tune.loguniform(5e-5, 1e-2),
+        "entropy_coeff": 0.01, # tune.loguniform(5e-5, 1e-2),
         "entropy_coeff_schedule": None,
     }
-
-
 
     ars_config = {
         "env": MyEnv,
@@ -550,7 +561,7 @@ if __name__ == "__main__":
         "offset": 0,
     }
 
-    stop_cond = {"training_iteration": 100}
+    stop_cond = {"training_iteration": 10000}
 
     if args.without_tune:
         train_ppo(config, lambda *args, **kwargs: None)
@@ -572,11 +583,6 @@ if __name__ == "__main__":
                      stop=stop_cond)
         elif args.algorithm == "ars":
             tune.run("ARS",
-                     config=ars_config,
-                     local_dir=config["env_config"]["mass_home"] + "/ray_result",
-                     stop=stop_cond)
-        elif args.algorithm == "experiment":
-            tune.run(tune.grid_search(["IMPALA", "APPO"]),
                      config=ars_config,
                      local_dir=config["env_config"]["mass_home"] + "/ray_result",
                      stop=stop_cond)

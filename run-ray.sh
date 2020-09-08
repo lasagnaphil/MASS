@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name mass_ray
-#SBATCH --nodes 15
+#SBATCH --nodes 2
 #SBATCH --tasks-per-node 1
 #SBATCH --cpus-per-task 40
 #SBATCH --output ./logs/mass.%j.out
@@ -9,11 +9,7 @@
 PYTHON_EXEC=/home/lasagnaphil/.conda/envs/mass/bin/python 
 RAY_EXEC=/home/lasagnaphil/.conda/envs/mass/bin/ray
 
-export OMP_NUM_THREADS=20
-export MKL_NUM_THREADS=20
-export KMP_AFFINITY=granularity=fine,compact,1,0
-
-worker_num=14 # Must be one less that the total number of nodes
+worker_num=1 # Must be one less that the total number of nodes
 
 # module load Langs/Python/3.6.4 # This will vary depending on your environment
 # source venv/bin/activate
@@ -48,5 +44,5 @@ done
 
 sleep 5
 
-$PYTHON_EXEC -u python/ray_train.py --cluster --redis_password $redis_password --algorithm=appo
+$PYTHON_EXEC -u python/ray_train.py --cluster --redis_password $redis_password --algorithm=ppo
 
