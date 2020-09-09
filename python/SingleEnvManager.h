@@ -15,7 +15,7 @@ namespace py = pybind11;
 class SingleEnvManager
 {
 public:
-    SingleEnvManager(std::string meta_file);
+    SingleEnvManager(const py::dict& config);
 
     int GetNumState();
     int GetNumAction();

@@ -5,17 +5,69 @@ import psutil
 
 num_physical_cores = psutil.cpu_count(logical=False)
 num_logical_cores = psutil.cpu_count(logical=True)
-num_cpus_for_driver = 8
 
-CONFIG = {}
+CONFIG = dict()
 
 common_config = {
     "env": "MyEnv",
     "env_config": {
         "mass_home": os.environ["PWD"],
-        "meta_file": "data/metadata.txt",
         "use_multi_env": False,
-        "num_envs": 1,
+        # "num_envs": 1,
+
+        "useMuscle": True,
+        "useAdaptiveSampling": False,
+
+        "human": "data/human.xml",
+        "ground": "data/ground.xml",
+        "obj": "data/OBJ",
+        "simpleMotion": "data/SimpleMotionSet.txt",
+        "jointMap": "data/JointMap.txt",
+        "muscle": "data/muscle284.xml",
+        "motionDataFiles": [
+            ("data/motion/walk.bvh", True)
+        ],
+
+        "mKp": 300,
+        "controlHz": 30,
+        "simulationHz": 600,
+
+        "jointDamping": 0.4,
+        "foot": ["TalusR", "TalusL"],
+        "footOffset": 0.038,
+        "axis": {
+            "Pelvis": 1,
+            "FemurR": 1,
+            "TibiaR": 1,
+            "TalusR": 2,
+            "FootThumbR": 2,
+            "FootPinkyR": 2,
+            "FemurL": 1,
+            "TibiaL": 1,
+            "TalusL": 2,
+            "FootThumbL": 2,
+            "FootPinkyL": 2,
+            "Spine": 1,
+            "Torso": 1,
+            "Neck": 1,
+            "Head": 1,
+            "ShoulderR": 0,
+            "ArmR": 0,
+            "ForeArmR": 0,
+            "HandR": 0,
+            "ShoulderL": 0,
+            "ArmL": 0,
+            "ForeArmL": 0,
+            "HandL": 0,
+        },
+        "endEffectors": ["HandL", "HandR", "TalusL", "TalusR", "Head"],
+        "w_q": 0.65, "w_v": 0.1, "w_ee": 0.15, "w_com": 0.1,
+        "rootHeightLowerLimit": 0.1818,
+        "timeLimit": 10.0,
+
+        "modifyingBodyNode": ["FemurL", "FemurR", "TibiaL", "TibiaR"],
+        "minSkeletonLength": [0.9, 0.9, 0.9, 0.9],
+        "maxSkeletonLength": [1.1, 1.1, 1.1, 1.1]
     },
 
     "framework": "torch",

@@ -4,6 +4,7 @@
 #include "Character.h"
 #include "BVH.h"
 #include "Muscle.h"
+#include "Parameter.h"
 
 #include <pybind11/embed.h>
 
@@ -16,7 +17,9 @@ int main(int argc,char** argv)
 		std::cout<<"Provide Metadata.txt"<<std::endl;
 		return 0;
 	}
-	env->Initialize(std::string(argv[1]),true);
+	Parameter::loadParameter(std::string(argv[1]), std::string(argv[2]));
+
+	env->Initialize(true);
 	// if(argc==3)
 	// 	env->SetUseMuscle(true);
 	// else
@@ -42,7 +45,7 @@ int main(int argc,char** argv)
 	glutInit(&argc, argv);
 
 	MASS::Window* window;
-	if(argc == 2)
+	if(argc == 3)
 	{
 		window = new MASS::Window(env);
 	}
@@ -50,20 +53,20 @@ int main(int argc,char** argv)
 	{
 		if(env->GetUseMuscle())
 		{
-			if(argc!=4){
+			if(argc!=5){
 				std::cout<<"Please provide two networks"<<std::endl;
 				return 0;
 			}
-			window = new MASS::Window(env,argv[2],argv[3]);
+			window = new MASS::Window(env,argv[3],argv[4]);
 		}
 		else
 		{
-			if(argc!=3)
+			if(argc!=4)
 			{
 				std::cout<<"Please provide the network"<<std::endl;
 				return 0;
 			}
-			window = new MASS::Window(env,argv[2]);
+			window = new MASS::Window(env,argv[3]);
 		}
 	}
 	// if(argc==1)

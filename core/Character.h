@@ -13,7 +13,7 @@ public:
 
 	Character();
 
-	void LoadSkeleton(const std::string& path,bool create_obj = false);
+	void LoadSkeleton(const std::string& path, const std::string& obj_path);
 	void LoadMuscles(const std::string& path);
 	void LoadBVH(const std::string& path,bool cyclic=true);
 

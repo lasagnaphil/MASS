@@ -1,20 +1,24 @@
 #include "EnvManager.h"
 #include "DARTHelper.h"
+#include "Parameter.h"
 
 #include <tbb/parallel_for_each.h>
 
-EnvManager::
-EnvManager(std::string meta_file,int num_envs)
-	:mNumEnvs(num_envs), mEnvs(num_envs)
-{
+EnvManager::EnvManager(const py::dict& config) {
+
+    mNumEnvs = config["num_envs"].cast<int>();
+    mEnvs.resize(mNumEnvs);
+
+    Parameter::loadParameter(config);
+
 	dart::math::seedRand();
 
     for (int i = 0; i < mNumEnvs; i++) {
         mEnvs[i] = new MASS::Environment();
     }
 
-	tbb::parallel_for_each(mEnvs.begin(), mEnvs.end(), [meta_file](MASS::Environment* env){
-	    env->Initialize(meta_file, false);
+	tbb::parallel_for_each(mEnvs.begin(), mEnvs.end(), [](MASS::Environment* env){
+	    env->Initialize(false);
 
         // env->SetUseMuscle(false);
         // env->SetControlHz(30);
@@ -36,6 +40,7 @@ EnvManager(std::string meta_file,int num_envs)
         // env->Initialize();
 	});
 }
+
 int
 EnvManager::
 GetNumState()

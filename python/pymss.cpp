@@ -10,7 +10,7 @@
 
 PYBIND11_MODULE(pymss, m) {
     py::class_<SingleEnvManager>(m, "SingleEnvManager")
-            .def(py::init<std::string>())
+            .def(py::init<const py::dict&>())
             .def("GetNumState", &SingleEnvManager::GetNumState)
             .def("GetNumAction", &SingleEnvManager::GetNumAction)
             .def("GetSimulationHz", &SingleEnvManager::GetSimulationHz)
@@ -35,7 +35,7 @@ PYBIND11_MODULE(pymss, m) {
 
 #ifdef COMPILE_MULTI_ENV_MANAGER
     py::class_<EnvManager>(m, "MultiEnvManager")
-            .def(py::init<std::string,int>())
+            .def(py::init<const py::dict&>())
             .def("GetNumState",&EnvManager::GetNumState)
             .def("GetNumAction",&EnvManager::GetNumAction)
             .def("GetSimulationHz",&EnvManager::GetSimulationHz)

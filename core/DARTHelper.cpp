@@ -238,7 +238,7 @@ Eigen::Matrix3d string_to_matrix3d(const std::string& input){
 }
 dart::dynamics::SkeletonPtr
 MASS::
-BuildFromFile(const std::string& path,bool create_obj)
+BuildFromFile(const std::string& path, const std::string& obj_path)
 {
 	TiXmlDocument doc;
 	if(!doc.LoadFile(path)){
@@ -345,10 +345,9 @@ BuildFromFile(const std::string& path,bool create_obj)
 
 		bn->getShapeNodesWith<VisualAspect>().back()->getVisualAspect()->setColor(color);
 
-		if(obj_file!="None" && create_obj)
+		if(obj_path != "None" && obj_path.empty())
 		{
-			std::string obj_path = std::string(MASS_ROOT_DIR)+"/data/OBJ/"+obj_file;
-			const aiScene* scene = MeshShape::loadMesh(std::string(obj_path));
+			const aiScene* scene = MeshShape::loadMesh(obj_path);
 
 			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01,0.01,0.01),scene));
 			visual_shape->setColorMode(MeshShape::ColorMode::SHAPE_COLOR);

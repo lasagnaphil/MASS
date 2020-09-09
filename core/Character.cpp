@@ -15,9 +15,9 @@ Character()
 
 void
 Character::
-LoadSkeleton(const std::string& path,bool create_obj)
+LoadSkeleton(const std::string& path, const std::string& obj_path)
 {
-	mSkeleton = BuildFromFile(path,create_obj);
+	mSkeleton = BuildFromFile(path, obj_path);
 	std::map<std::string,std::string> bvh_map;
 	TiXmlDocument doc;
 	doc.LoadFile(path);

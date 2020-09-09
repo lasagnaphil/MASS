@@ -44,8 +44,7 @@ MarginalTransition = namedtuple('MarginalTransition', ('sb', 'v'))
 
 class MyEnv(gym.Env):
     def __init__(self, config):
-        self.meta_file = config["mass_home"] + "/" + config["meta_file"]
-        self.env = SingleEnvManager(self.meta_file)
+        self.env = SingleEnvManager(config)
 
         self.use_muscle = self.env.UseMuscle()
         self.use_adaptive_sampling = self.env.UseAdaptiveSampling()
@@ -135,8 +134,7 @@ class MyEnv(gym.Env):
 
 class MyVectorEnv(VectorEnv):
     def __init__(self, config):
-        self.meta_file = config["mass_home"] + "/" + config["meta_file"]
-        self.env = MultiEnvManager(self.meta_file, config["num_envs"])
+        self.env = MultiEnvManager(config)
 
         self.use_muscle = self.env.UseMuscle()
         self.use_adaptive_sampling = self.env.UseAdaptiveSampling()
@@ -539,7 +537,6 @@ def train(config, reporter):
                 marginal_learner.save(f"{mass_home}/nn/{i}_marginal.pt")
 
 from pathlib import Path
-import importlib
 
 def select(cond, v1, v2):
     return v1 if cond else v2
@@ -550,7 +547,7 @@ parser.add_argument("--gpu", action="store_true")
 parser.add_argument("--redis_password", type=str)
 parser.add_argument("--cluster", action='store_true')
 parser.add_argument("--config", type=str, default="default")
-parser.add_argument("--config_file", type=str, default="python.ray_config")
+parser.add_argument("--config_file", type=str, default="python/ray_config.py")
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -566,10 +563,11 @@ if __name__ == "__main__":
     if MultiEnvManager:
         register_env("MyVectorEnv", lambda conf: MyVectorEnv(conf))
 
-    Path('nn_ray').mkdir(exist_ok=True)
+    Path('nn').mkdir(exist_ok=True)
 
-    CONFIG = importlib.import_module(args.config_file).CONFIG
-    config = CONFIG[args.config]
+    _locals = dict()
+    exec(open(args.config_file).read(), globals(), _locals)
+    config = _locals["CONFIG"][args.config]
 
     stop_cond = {"training_iteration": config["num_iters"]}
 

@@ -3,6 +3,7 @@
 #include "Character.h"
 #include "BVH.h"
 #include "Muscle.h"
+#include "Parameter.h"
 #include "dart/collision/bullet/bullet.hpp"
 using namespace dart;
 using namespace dart::simulation;
@@ -18,95 +19,33 @@ Environment()
 
 void
 Environment::
-Initialize(const std::string& meta_file,bool load_obj)
+Initialize(bool load_obj)
 {
-	std::ifstream ifs(meta_file);
-	if(!(ifs.is_open()))
-	{
-		std::cout<<"Can't read file "<<meta_file<<std::endl;
-		return;
-	}
-	std::string str;
-	std::string index;
-	std::stringstream ss;
 	MASS::Character* character = new MASS::Character();
-	while(!ifs.eof())
-	{
-		str.clear();
-		index.clear();
-		ss.clear();
 
-		std::getline(ifs,str);
-		ss.str(str);
-		ss>>index;
-		if(!index.compare("use_muscle"))
-		{	
-			std::string str2;
-			ss>>str2;
-			if(!str2.compare("true"))
-				this->SetUseMuscle(true);
-			else
-				this->SetUseMuscle(false);
-		}
-		else if(!index.compare("con_hz")){
-			int hz;
-			ss>>hz;
-			this->SetControlHz(hz);
-		}
-		else if(!index.compare("sim_hz")){
-			int hz;
-			ss>>hz;
-			this->SetSimulationHz(hz);
-		}
-		else if(!index.compare("sim_hz")){
-			int hz;
-			ss>>hz;
-			this->SetSimulationHz(hz);
-		}
-		else if(!index.compare("skel_file")){
-			std::string str2;
-			ss>>str2;
+	double kp = Parameter::mKp;
 
-			character->LoadSkeleton(std::string(MASS_ROOT_DIR)+str2,load_obj);
-		}
-		else if(!index.compare("muscle_file")){
-			std::string str2;
-			ss>>str2;
-			if(this->GetUseMuscle())
-				character->LoadMuscles(std::string(MASS_ROOT_DIR)+str2);
-		}
-		else if(!index.compare("bvh_file")){
-			std::string str2,str3;
-
-			ss>>str2>>str3;
-			bool cyclic = false;
-			if(!str3.compare("true"))
-				cyclic = true;
-			character->LoadBVH(std::string(MASS_ROOT_DIR)+str2,cyclic);
-		}
-		else if(!index.compare("reward_param")){
-			double a,b,c,d;
-			ss>>a>>b>>c>>d;
-			this->SetRewardParameters(a,b,c,d);
-
-		}
-
-
+	this->SetUseMuscle(Parameter::useMuscle);
+	this->SetControlHz(Parameter::controlHz);
+	this->SetSimulationHz(Parameter::simulationHz);
+    this->SetRewardParameters(Parameter::w_q, Parameter::w_v, Parameter::w_ee, Parameter::w_com);
+    if (load_obj) {
+        character->LoadSkeleton(Parameter::mass_home + "/" + Parameter::human, Parameter::obj);
+    }
+    else {
+        character->LoadSkeleton(Parameter::mass_home + "/" + Parameter::human, "None");
+    }
+	if (Parameter::useMuscle) {
+	    character->LoadMuscles(Parameter::mass_home + "/" + Parameter::muscle);
 	}
-	ifs.close();
-	
-	
-	double kp = 600.0;
+	character->LoadBVH(
+	        Parameter::mass_home + "/" + Parameter::motionDataFiles[0].first,
+	        Parameter::motionDataFiles[0].second);
 	character->SetPDParameters(kp,sqrt(2*kp));
-	this->SetCharacter(character);
-	this->SetGround(MASS::BuildFromFile(std::string(MASS_ROOT_DIR)+std::string("/data/ground.xml")));
 
-	this->Initialize();
-}
-void
-Environment::
-Initialize()
-{
+	this->SetCharacter(character);
+	this->SetGround(MASS::BuildFromFile(Parameter::mass_home + "/" + Parameter::ground, "None"));
+
 	if(mCharacter->GetSkeleton()==nullptr){
 		std::cout<<"Initialize character First"<<std::endl;
 		exit(0);

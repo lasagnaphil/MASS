@@ -10,7 +10,7 @@ namespace py = pybind11;
 class EnvManager
 {
 public:
-	EnvManager(std::string meta_file,int num_envs);
+    EnvManager(const py::dict& config);
 
 	int GetNumState();
 	int GetNumAction();

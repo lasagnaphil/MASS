@@ -3,14 +3,17 @@
 //
 
 #include "SingleEnvManager.h"
+#include "Parameter.h"
 
 SingleEnvManager::
-SingleEnvManager(std::string meta_file)
+SingleEnvManager(const py::dict& config)
         : env()
 {
     dart::math::seedRand();
 
-    env.Initialize(meta_file, false);
+    Parameter::loadParameter(config);
+
+    env.Initialize(false);
 }
 int
 SingleEnvManager::
