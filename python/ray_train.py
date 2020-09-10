@@ -497,6 +497,8 @@ def train(config, reporter):
 
     mass_home = config["env_config"]["mass_home"]
 
+    Path(f"{mass_home}/nn").mkdir(exist_ok=True)
+
     for i in range(1, num_iters + 1):
         result = trainer.train()
         reporter(**result)
@@ -531,15 +533,18 @@ def train(config, reporter):
 
         if i % 50 == 0:
             checkpoint = trainer.save()
+            checkpoint_name = checkpoint.split('/')[-3]
+            Path(f"{mass_home}/nn/{checkpoint_name}").mkdir(exist_ok=True)
 
-            model.save(f"{mass_home}/nn/{i}.pt")
+            model.save(f"{mass_home}/nn/{checkpoint_name}/{i}.pt")
             if local_env.use_muscle:
-                muscle_learner.save(f"{mass_home}/nn/{i}_muscle.pt")
+                muscle_learner.save(f"{mass_home}/nn/{checkpoint_name}/{i}_muscle.pt")
             if local_env.use_adaptive_sampling:
-                marginal_learner.save(f"{mass_home}/nn/{i}_marginal.pt")
+                marginal_learner.save(f"{mass_home}/nn/{checkpoint_name}/{i}_marginal.pt")
 
 from pathlib import Path
 import importlib
+import psutil
 
 def select(cond, v1, v2):
     return v1 if cond else v2
@@ -559,25 +564,23 @@ if __name__ == "__main__":
         print("Nodes in the Ray cluster:")
         print(ray.nodes())
     else:
-        ray.init(num_cpus=32, num_gpus=1)
+        num_logical_cores = psutil.cpu_count(logical=True)
+        ray.init(num_cpus=num_logical_cores, num_gpus=1)
 
     ModelCatalog.register_custom_model("my_model", SimulationNN_Ray)
     register_env("MyEnv", lambda conf: MyEnv(conf))
     if MultiEnvManager:
         register_env("MyVectorEnv", lambda conf: MyVectorEnv(conf))
 
-    Path('nn_ray').mkdir(exist_ok=True)
-
     CONFIG = importlib.import_module(args.config_file).CONFIG
     config = CONFIG[args.config]
 
-    # stop_cond = {"training_iteration": config["num_iters"]}
-    stop_cond = {"episode_reward_mean": 1000}
+    stop_cond = {"training_iteration": config["num_iters"], "episode_reward_mean": 1000}
 
     if args.without_tune:
        train(config, lambda *args, **kwargs: None)
     else:
-        local_dir = config["env_config"]["mass_home"] + "/ray_result"
+        local_dir = config["env_config"]["mass_home"] + "/ray_results"
         tune.run(train,
                  name=args.config,
                  config=config,

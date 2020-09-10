@@ -13,7 +13,7 @@ common_config = {
     "env": "MyEnv",
     "env_config": {
         "mass_home": os.environ["PWD"],
-        "meta_file": "data/metadata.txt",
+        "meta_file": "data/metadata_nomuscle.txt",
         "use_multi_env": False,
         "num_envs": 1,
     },
@@ -51,8 +51,8 @@ CONFIG["ppo"].update({
 
     "num_workers": 16,
     "num_cpus_per_worker": 1,
-    "num_cpus_for_driver": 8,
-    # "num_gpus": 1,
+    "num_cpus_for_driver": 1,
+    "num_gpus": 1,
 
     "use_critic": True,
     "use_gae": True,
@@ -78,8 +78,8 @@ CONFIG["ppo"].update({
     "simple_optimizer": False,
 })
 
-for num_workers in (4, 8, 16, 32):
-    for frag_len in (32, 64, 128, 256):
+for num_workers in (8, 16, 32, 47):
+    for frag_len in (64, 128, 256, 512):
         new_config = CONFIG["ppo"].copy()
         new_config.update({
             "num_workers": num_workers,
