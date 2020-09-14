@@ -91,12 +91,13 @@ class MyEnv(gym.Env):
     def step(self, action):
         self.env.SetAction(action)
         if self.use_muscle:
-            mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
-            for _ in range(self.num_simulation_per_control // 2):
-                dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
-                activations = self.muscle_model(mt, dt).cpu().detach().numpy()
-                self.env.SetActivationLevels(activations)
-                self.env.Steps(2)
+            with torch.no_grad():
+                mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
+                for _ in range(self.num_simulation_per_control // 2):
+                    dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
+                    activations = self.muscle_model(mt, dt).cpu().detach().numpy()
+                    self.env.SetActivationLevels(activations)
+                    self.env.Steps(2)
         else:
             self.env.StepsAtOnce()
 
@@ -196,12 +197,13 @@ class MyVectorEnv(VectorEnv):
     def vector_step(self, actions):
         self.env.SetActions(actions)
         if self.use_muscle:
-            mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
-            for _ in range(self.num_simulation_per_control // 2):
-                dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
-                activations = self.muscle_model(mt, dt).cpu().detach().numpy()
-                self.env.SetActivationLevels(activations)
-                self.env.Steps(2)
+            with torch.no_grad():
+                mt = torch.from_numpy(self.env.GetMuscleTorques()).to(self.device)
+                for _ in range(self.num_simulation_per_control // 2):
+                    dt = torch.from_numpy(self.env.GetDesiredTorques()).to(self.device)
+                    activations = self.muscle_model(mt, dt).cpu().detach().numpy()
+                    self.env.SetActivationLevels(activations)
+                    self.env.Steps(2)
         else:
             self.env.StepsAtOnce()
 
@@ -411,7 +413,8 @@ class MarginalLearner:
 
         # target distribution
         def target_dist(x):
-            marginal_value = self.model(torch.from_numpy(x)).cpu().detach().numpy().reshape(-1)
+            with torch.no_grad():
+                marginal_value = self.model(torch.from_numpy(x)).item()
             p = math.exp(self.marginal_k * (1. - marginal_value))
             return p
 
@@ -575,7 +578,7 @@ if __name__ == "__main__":
     CONFIG = importlib.import_module(args.config_file).CONFIG
     config = CONFIG[args.config]
 
-    stop_cond = {"training_iteration": config["num_iters"], "episode_reward_mean": 1000}
+    stop_cond = {"training_iteration": config["num_iters"]}
 
     if args.without_tune:
        train(config, lambda *args, **kwargs: None)

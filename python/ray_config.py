@@ -13,7 +13,7 @@ common_config = {
     "env": "MyEnv",
     "env_config": {
         "mass_home": os.environ["PWD"],
-        "meta_file": "data/metadata_nomuscle.txt",
+        "meta_file": "data/metadata.txt",
         "use_multi_env": False,
         "num_envs": 1,
     },
